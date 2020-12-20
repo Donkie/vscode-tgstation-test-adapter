@@ -1,26 +1,25 @@
 {
-  "name": "vscode-example-test-adapter",
-  "displayName": "Example Test Explorer",
-  "description": "Run your Example tests in the Sidebar of Visual Studio Code",
+  "name": "vscode-tgstation-test-adapter",
+  "displayName": "Tgstation Test Explorer",
+  "description": "Run your tgstation tests in the Sidebar of Visual Studio Code",
   "icon": "img/icon.png",
-  "author": "Holger Benl <hbenl@evandor.de>",
-  "publisher": "hbenl",
+  "author": "Daniel Hultgren <daniel.cf.hultgren@gmail.com>",
+  "publisher": "Donkie",
   "version": "0.0.1",
   "license": "MIT",
-  "homepage": "https://github.com/hbenl/vscode-example-test-adapter",
+  "homepage": "https://github.com/Donkie/vscode-tgstation-test-adapter",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hbenl/vscode-example-test-adapter.git"
+    "url": "https://github.com/Donkie/vscode-tgstation-test-adapter.git"
   },
   "bugs": {
-    "url": "https://github.com/hbenl/vscode-example-test-adapter/issues"
+    "url": "https://github.com/Donkie/vscode-tgstation-test-adapter/issues"
   },
   "categories": [
     "Other"
   ],
   "keywords": [
-    "test",
-    "testing"
+    "test", "testing", "tgstation", "byond", "dm"
   ],
   "main": "out/main.js",
   "scripts": {
@@ -53,7 +52,7 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "Example Test Explorer configuration",
+      "title": "Tgstation Test Explorer configuration",
       "properties": {
         "exampleExplorer.logpanel": {
           "description": "write diagnotic logs to an output panel",
