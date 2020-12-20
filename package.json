@@ -52,17 +52,21 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "Tgstation Test Explorer configuration",
+      "title": "Tgstation Test Explorer",
       "properties": {
-        "exampleExplorer.logpanel": {
-          "description": "write diagnotic logs to an output panel",
-          "type": "boolean",
-          "scope": "resource"
-        },
-        "exampleExplorer.logfile": {
-          "description": "write diagnostic logs to the given file",
+        "tgstationExplorer.apps.dreammaker": {
           "type": "string",
-          "scope": "resource"
+          "description": "Path to dm.exe",
+          "format": "uri",
+          "scope": "machine",
+          "default": "C:/Program Files (x86)/BYOND/bin/dm.exe"
+        },
+        "tgstationExplorer.apps.dreamdaemon": {
+          "type": "string",
+          "description": "Path to dreamdaemon.exe",
+          "format": "uri",
+          "scope": "machine",
+          "default": "C:/Program Files (x86)/BYOND/bin/dreamdaemon.exe"
         }
       }
     }

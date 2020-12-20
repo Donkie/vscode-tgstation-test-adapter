@@ -14,6 +14,13 @@ async function exists(fileordir: string) {
 	}
 }
 
+async function mkDir(directory: string) {
+	let direxists = await exists(directory);
+	if(!direxists){
+		await fsp.mkdir(directory);
+	}
+}
+
 async function rmDir(directory: string) {
 	let dirExists = await exists(directory);
 	if(!dirExists){
@@ -212,7 +219,11 @@ function runDaemonProcess(command: string, args: string[]) {
 }
 
 async function compileDME(path: string) {
-	let stdout = await runProcess('C:/Program Files (x86)/BYOND/bin/dm.exe', [path]);
+	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationExplorer').get('apps.dreammaker');
+	if(dmpath == undefined){
+		throw Error("Dreammaker path not set");
+	}
+	let stdout = await runProcess(dmpath, [path]);
 	if (/tgstation\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error('Compilation failed:\n' + stdout);
 	}
@@ -226,9 +237,13 @@ async function runDMB(path: string) {
 	let root = getRoot();
 
 	await rmDir(root.fsPath + '/data/logs/unit_test');
-	await fsp.mkdir(root.fsPath + '/data/logs/unit_test'); // Make empty dir so we have something to watch until the server starts populating it
+	await mkDir(root.fsPath + '/data/logs/unit_test'); // Make empty dir so we have something to watch until the server starts populating it
 
-	runDaemonProcess('C:/Program Files (x86)/BYOND/bin/dreamdaemon.exe', [path, '-close', '-trusted', '-verbose', '-params "log-directory=unit_test"']);
+	let ddpath: string|undefined = vscode.workspace.getConfiguration('tgstationExplorer').get('apps.dreamdaemon');
+	if(ddpath == undefined){
+		throw Error("Dreamdaemon path not set");
+	}
+	runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params "log-directory=unit_test"']);
 
 	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
 	// A workaround is to monitor game.log for the "server reboot" message.
