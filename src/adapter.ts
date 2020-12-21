@@ -20,7 +20,7 @@ export class DMAdapter implements TestAdapter {
 		public readonly workspace: vscode.WorkspaceFolder,
 		private readonly log: Log
 	) {
-		this.log.info('Initializing tgstation DM adapter');
+		this.log.info('Initializing tgstation test adapter');
 
 		this.disposables.push(this.testsEmitter);
 		this.disposables.push(this.testStatesEmitter);
@@ -28,7 +28,7 @@ export class DMAdapter implements TestAdapter {
 	}
 
 	async load(): Promise<void> {
-		this.log.info('Loading tgstation DM tests');
+		this.log.info('Loading tgstation tests');
 
 		this.testsEmitter.fire(<TestLoadStartedEvent>{ type: 'started' });
 

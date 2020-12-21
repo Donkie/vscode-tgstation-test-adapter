@@ -46,7 +46,7 @@ function getRoot(): vscode.Uri {
 export function loadTests(): Promise<TestSuiteInfo> {
 	let root = getRoot();
 
-	let a = vscode.workspace.openTextDocument(vscode.Uri.parse(root + '/code/modules/unit_tests/_unit_tests.dm'))
+	let a = vscode.workspace.openTextDocument(vscode.Uri.parse(`${root}/code/modules/unit_tests/_unit_tests.dm`))
 		.then(doc => {
 			let text = doc.getText();
 			let regexp = /#include "(\w+\.dm)"/gm;
@@ -65,7 +65,7 @@ export function loadTests(): Promise<TestSuiteInfo> {
 			let regexp = /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
 			let test_promises: Thenable<TestSuiteInfo>[] = [];
 			test_files.forEach(test_file => {
-				let file_uri = vscode.Uri.parse(root + '/code/modules/unit_tests/' + test_file);
+				let file_uri = vscode.Uri.parse(`${root}/code/modules/unit_tests/${test_file}`);
 				test_promises.push(vscode.workspace.openTextDocument(file_uri)
 					.then(doc => {
 						let text = doc.getText();
@@ -92,7 +92,7 @@ export function loadTests(): Promise<TestSuiteInfo> {
 						let test_file_name = test_file.substring(0, test_file.length - 3);
 						let suite: TestSuiteInfo = {
 							type: 'suite',
-							id: 'suite_' + test_file_name,
+							id: `suite_${test_file_name}`,
 							label: test_file_name,
 							file: file_uri.fsPath,
 							children: tests
@@ -176,15 +176,42 @@ export async function runAllTests(
 	});
 }
 
+async function getProjectName(){
+	let dmefilename: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.DMEName');
+	if(dmefilename == undefined){
+		throw Error(".dme name not set");
+	}
+
+	let root = getRoot();
+	let dmeexists = await exists(`${root.fsPath}/${dmefilename}`);
+	if(!dmeexists){
+		throw Error(`${dmefilename} does not exist in the current workspace. You can change this in the Tgstation Test Explorer workspace settings.`);
+	}
+	
+	let projectname = dmefilename.substring(0, dmefilename.length - 4);
+	return projectname;
+}
+
+async function writeDefines(fd: fsp.FileHandle){
+	let defines: string[]|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.defines');
+	if(defines == undefined){
+		return;
+	}
+	
+	for(const define of defines){
+		await fd.write(`${define}\n`);
+	}
+}
+
 async function makeTestDME() {
 	let root = getRoot();
-	let testDMEPath = root.fsPath + '/tgstation.mdme.dme';
+	let projectName = await getProjectName();
+	let testDMEPath = `${root.fsPath}/${projectName}.mdme.dme`;
 
 	let fdNew = await fsp.open(testDMEPath, 'w');
-	let fdOrig = await fsp.open(root.fsPath + '/tgstation.dme', 'r');
+	let fdOrig = await fsp.open(`${root.fsPath}/${projectName}.dme`, 'r');
 
-	await fdNew.write('#define CIBUILDING\n');
-	await fdNew.write('#define LOWMEMORYMODE\n');
+	await writeDefines(fdNew);
 
 	await fdOrig.readFile()
 		.then(buf => {
@@ -198,7 +225,7 @@ async function makeTestDME() {
 }
 
 function runProcess(command: string, args: string[]): Promise<string> {
-	return new Promise<string>((resolve, reject) => {
+	return new Promise<string>((resolve, _) => {
 		let stdout = '';
 		let process = child.spawn(command, args);
 		process.stdout.on('data', (data: Buffer) => {
@@ -219,27 +246,28 @@ function runDaemonProcess(command: string, args: string[]) {
 }
 
 async function compileDME(path: string) {
-	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationExplorer').get('apps.dreammaker');
+	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
 		throw Error("Dreammaker path not set");
 	}
 	let stdout = await runProcess(dmpath, [path]);
-	if (/tgstation\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
-		throw new Error('Compilation failed:\n' + stdout);
+	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
+		throw new Error(`Compilation failed:\n${stdout}`);
 	}
 
 	let root = getRoot();
-	let testDMBPath = root.fsPath + '/tgstation.mdme.dmb';
+	let projectName = await getProjectName();
+	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
 	return testDMBPath;
 }
 
 async function runDMB(path: string) {
 	let root = getRoot();
 
-	await rmDir(root.fsPath + '/data/logs/unit_test');
-	await mkDir(root.fsPath + '/data/logs/unit_test'); // Make empty dir so we have something to watch until the server starts populating it
+	await rmDir(`${root.fsPath}/data/logs/unit_test`);
+	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
 
-	let ddpath: string|undefined = vscode.workspace.getConfiguration('tgstationExplorer').get('apps.dreamdaemon');
+	let ddpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreamdaemon');
 	if(ddpath == undefined){
 		throw Error("Dreamdaemon path not set");
 	}
@@ -248,15 +276,15 @@ async function runDMB(path: string) {
 	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
 	// A workaround is to monitor game.log for the "server reboot" message.
 	// tfw u work with promises but still end up in callback hell
-	return new Promise<void>((resolve, reject) => {
-		let dirwatcher = fs.watch(root.fsPath + '/data/logs/unit_test');
+	return new Promise<void>((resolve, _) => {
+		let dirwatcher = fs.watch(`${root.fsPath}/data/logs/unit_test`);
 		dirwatcher.on('change', (_, filename) => {
 			if (filename == 'game.log') {
 				dirwatcher.close();
 
-				let filewatcher = fs.watch(root.fsPath + '/data/logs/unit_test/game.log');
+				let filewatcher = fs.watch(`${root.fsPath}/data/logs/unit_test/game.log`);
 				filewatcher.on('change', (_, __) => {
-					fsp.open(root.fsPath + '/data/logs/unit_test/game.log', 'r')
+					fsp.open(`${root.fsPath}/data/logs/unit_test/game.log`, 'r')
 						.then(handle => {
 							handle.readFile()
 								.then(buf => buf.toString())
@@ -290,7 +318,7 @@ interface TestLog {
 
 async function readTestsLog(): Promise<TestLog> {
 	let root = getRoot();
-	let fdTestLog = await fsp.open(root.fsPath + '/data/logs/unit_test/tests.log', 'r');
+	let fdTestLog = await fsp.open(`${root.fsPath}/data/logs/unit_test/tests.log`, 'r');
 	let buf = await fdTestLog.readFile();
 	let text = buf.toString();
 	let lines = text.split('\n');
@@ -341,10 +369,11 @@ async function readTestsLog(): Promise<TestLog> {
 
 async function cleanupTest(){
 	let root = getRoot();
-	await fsp.unlink(root.fsPath + '/tgstation.mdme.dmb');
-	await fsp.unlink(root.fsPath + '/tgstation.mdme.dme');
-	await fsp.unlink(root.fsPath + '/tgstation.mdme.dyn.rsc');
-	await fsp.unlink(root.fsPath + '/tgstation.mdme.rsc');
+	let projectName = await getProjectName();
+	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dmb`);
+	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dme`);
+	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`);
+	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`);
 }
 
 async function runTest(): Promise<TestLog> {

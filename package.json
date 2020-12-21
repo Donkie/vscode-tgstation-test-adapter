@@ -5,7 +5,7 @@
   "icon": "img/icon.png",
   "author": "Daniel Hultgren <daniel.cf.hultgren@gmail.com>",
   "publisher": "Donkie",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "license": "MIT",
   "homepage": "https://github.com/Donkie/vscode-tgstation-test-adapter",
   "repository": {
@@ -54,19 +54,31 @@
       "type": "object",
       "title": "Tgstation Test Explorer",
       "properties": {
-        "tgstationExplorer.apps.dreammaker": {
+        "tgstationTestExplorer.apps.dreammaker": {
           "type": "string",
           "description": "Path to dm.exe",
           "format": "uri",
           "scope": "machine",
           "default": "C:/Program Files (x86)/BYOND/bin/dm.exe"
         },
-        "tgstationExplorer.apps.dreamdaemon": {
+        "tgstationTestExplorer.apps.dreamdaemon": {
           "type": "string",
           "description": "Path to dreamdaemon.exe",
           "format": "uri",
           "scope": "machine",
           "default": "C:/Program Files (x86)/BYOND/bin/dreamdaemon.exe"
+        },
+        "tgstationTestExplorer.project.DMEName": {
+          "type": "string",
+          "description": "Name of the .dme project file",
+          "scope": "resource",
+          "default": "tgstation.dme"
+        },
+        "tgstationTestExplorer.project.defines": {
+          "type": "array",
+          "description": "#defines to set for the project. These are injected to the beginning of the .dme file before compiling.",
+          "scope": "resource",
+          "default": ["#define CIBUILDING", "#define LOWMEMORYMODE"]
         }
       }
     }
