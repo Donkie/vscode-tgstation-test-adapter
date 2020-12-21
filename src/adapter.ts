@@ -1,20 +1,24 @@
 import * as vscode from 'vscode';
-import { TestAdapter, TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent, TestSuiteInfo } from 'vscode-test-adapter-api';
+import { TestAdapter, TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent, TestSuiteInfo, RetireEvent } from 'vscode-test-adapter-api';
 import { Log } from 'vscode-test-adapter-util';
 import { loadTests, runAllTests } from './tests';
+import * as util from 'util';
 
 export class DMAdapter implements TestAdapter {
 	private disposables: { dispose(): void }[] = [];
 
 	private readonly testsEmitter = new vscode.EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
 	private readonly testStatesEmitter = new vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
-	private readonly autorunEmitter = new vscode.EventEmitter<void>();
+	private readonly retireEmitter = new vscode.EventEmitter<RetireEvent>();
+	private readonly cancelEmitter = new vscode.EventEmitter<void>();
 
+	private isLoading = false;
+	private isRunning = false;
 	private loadedTests: TestSuiteInfo | undefined;
 
 	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> { return this.testsEmitter.event; }
 	get testStates(): vscode.Event<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent> { return this.testStatesEmitter.event; }
-	get autorun(): vscode.Event<void> | undefined { return this.autorunEmitter.event; }
+	get retire(): vscode.Event<RetireEvent> { return this.retireEmitter.event; }
 
 	constructor(
 		public readonly workspace: vscode.WorkspaceFolder,
@@ -24,35 +28,54 @@ export class DMAdapter implements TestAdapter {
 
 		this.disposables.push(this.testsEmitter);
 		this.disposables.push(this.testStatesEmitter);
-		this.disposables.push(this.autorunEmitter);
+		this.disposables.push(this.retireEmitter);
+		this.disposables.push(this.cancelEmitter);
 	}
 
 	async load(): Promise<void> {
+		if (this.isLoading){
+			return;
+		}
+
+		this.isLoading = true;
 		this.log.info('Loading tgstation tests');
 
-		this.testsEmitter.fire(<TestLoadStartedEvent>{ type: 'started' });
+		this.testsEmitter.fire({ type: 'started' });
 
-		this.loadedTests = await loadTests();
+		try{
+			this.loadedTests = await loadTests();
+			this.testsEmitter.fire({ type: 'finished', suite: this.loadedTests });
+		} catch(e) {
+			this.testsEmitter.fire({ type: 'finished', errorMessage: util.inspect(e)});
+		}
 
-		this.testsEmitter.fire(<TestLoadFinishedEvent>{ type: 'finished', suite: this.loadedTests });
+		this.retireEmitter.fire({});
+
+		this.isLoading = false;
 	}
 
 	async run(_tests: string[]): Promise<void> {
 		if (this.loadedTests == undefined) {
 			throw Error("Tests not loaded yet");
 		}
+		if (this.isRunning){
+			return;
+		}
+
+		this.isRunning = true;
 
 		let allTestSuites = this.loadedTests.children.map(suite => suite.id);
 		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests: allTestSuites });
 
-		await runAllTests(this.loadedTests.children, this.testStatesEmitter);
+		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter);
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+
+		this.isRunning = false;
 	}
 
 	cancel(): void {
-		// in a "real" TestAdapter this would kill the child process for the current test run (if there is any)
-		throw new Error("Method not implemented.");
+		this.cancelEmitter.fire();
 	}
 
 	dispose(): void {

@@ -123,7 +123,8 @@ export function loadTests(): Promise<TestSuiteInfo> {
 
 export async function runAllTests(
 	tests: (TestSuiteInfo | TestInfo)[],
-	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>
+	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
+	cancelEmitter: vscode.EventEmitter<void>
 ): Promise<void> {
 
 	let allTests: string[] = [];
@@ -139,16 +140,19 @@ export async function runAllTests(
 
 	let testLog: TestLog | undefined;
 	try {
-		testLog = await runTest();
+		testLog = await runTest(cancelEmitter);
 	}
 	catch (err) {
-		// Mark tests as errored if we catch an error
-		tests.forEach(suiteortest => {
-			let suite = suiteortest as TestSuiteInfo;
-			suite.children.forEach(test => {
-				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'errored', message: err });
+		if(err != 'Canceled'){
+			// Mark tests as errored if we catch an error
+			allTests.forEach(test => {
+				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'errored', message: err });
 			})
-		})
+		} else {
+			allTests.forEach(test => {
+				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
+			});
+		}
 	}
 
 	// Mark suites as completed no matter what the outcome
@@ -224,17 +228,22 @@ async function makeTestDME() {
 	return testDMEPath;
 }
 
-function runProcess(command: string, args: string[]): Promise<string> {
-	return new Promise<string>((resolve, _) => {
+function runProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>): Promise<string> {
+	return new Promise<string>((resolve, reject) => {
 		let stdout = '';
 		let process = child.spawn(command, args);
+		let cancelListener = cancelEmitter.event(_ => {
+			process.kill();
+			reject("Canceled");
+		});
 		process.stdout.on('data', (data: Buffer) => {
 			stdout += data;
 		})
 		process.stderr.on('data', (data: Buffer) => {
 			stdout += data;
 		})
-		process.on('close', _ => {
+		process.once('exit', _ => {
+			cancelListener.dispose();
 			resolve(stdout);
 		})
 	});
@@ -245,12 +254,13 @@ function runDaemonProcess(command: string, args: string[]) {
 	child.exec(`"${command}" ${joinedArgs}`);
 }
 
-async function compileDME(path: string) {
+async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>) {
 	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
 		throw Error("Dreammaker path not set");
 	}
-	let stdout = await runProcess(dmpath, [path]);
+
+	let stdout = await runProcess(dmpath, [path], cancelEmitter);
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
 	}
@@ -261,7 +271,7 @@ async function compileDME(path: string) {
 	return testDMBPath;
 }
 
-async function runDMB(path: string) {
+async function runDMB(path: string, cancelEmitter: vscode.EventEmitter<void>) {
 	let root = getRoot();
 
 	await rmDir(`${root.fsPath}/data/logs/unit_test`);
@@ -276,7 +286,11 @@ async function runDMB(path: string) {
 	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
 	// A workaround is to monitor game.log for the "server reboot" message.
 	// tfw u work with promises but still end up in callback hell
-	return new Promise<void>((resolve, _) => {
+	return new Promise<void>((resolve, reject) => {
+		let cancelListener = cancelEmitter.event(_ => {
+			reject("Canceled");
+		});
+
 		let dirwatcher = fs.watch(`${root.fsPath}/data/logs/unit_test`);
 		dirwatcher.on('change', (_, filename) => {
 			if (filename == 'game.log') {
@@ -292,6 +306,7 @@ async function runDMB(path: string) {
 									handle.close();
 									if (/Rebooting World\. Round ended\./.exec(contents) != null) {
 										filewatcher.close();
+										cancelListener.dispose();
 										resolve();
 									}
 								});
@@ -376,12 +391,12 @@ async function cleanupTest(){
 	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`);
 }
 
-async function runTest(): Promise<TestLog> {
+async function runTest(cancelEmitter: vscode.EventEmitter<void>): Promise<TestLog> {
 	let testDMEPath = await makeTestDME();
 
-	let testDMBPath = await compileDME(testDMEPath);
+	let testDMBPath = await compileDME(testDMEPath, cancelEmitter);
 
-	await runDMB(testDMBPath);
+	await runDMB(testDMBPath, cancelEmitter);
 
 	let testLog = await readTestsLog();
 
