@@ -19,7 +19,11 @@
     "Other"
   ],
   "keywords": [
-    "test", "testing", "tgstation", "byond", "dm"
+    "test",
+    "testing",
+    "tgstation",
+    "byond",
+    "dm"
   ],
   "main": "out/main.js",
   "scripts": {
@@ -31,11 +35,13 @@
     "publish": "vsce publish"
   },
   "dependencies": {
+    "ps-node": "^0.1.6",
     "tslib": "^1.9.3",
     "vscode-test-adapter-api": "^1.7.0",
     "vscode-test-adapter-util": "^0.7.0"
   },
   "devDependencies": {
+    "@types/ps-node": "^0.1.0",
     "@types/vscode": "~1.23.0",
     "typescript": "^3.5.3",
     "vsce": "^1.65.0"
@@ -78,7 +84,10 @@
           "type": "array",
           "description": "#defines to set for the project. These are injected to the beginning of the .dme file before compiling.",
           "scope": "resource",
-          "default": ["#define CIBUILDING", "#define LOWMEMORYMODE"]
+          "default": [
+            "#define CIBUILDING",
+            "#define LOWMEMORYMODE"
+          ]
         }
       }
     }

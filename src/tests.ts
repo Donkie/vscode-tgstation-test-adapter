@@ -4,6 +4,11 @@ import * as child from 'child_process';
 import { promises as fsp } from 'fs';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as util from 'util';
+import * as ps from 'ps-node';
+
+const psLookup = util.promisify(ps.lookup);
+const psKill = util.promisify(ps.kill);
 
 async function exists(fileordir: string) {
 	try {
@@ -33,6 +38,14 @@ async function rmDir(directory: string) {
 	try{
 		await fsp.unlink(directory);
 	} catch {}
+}
+
+function timeout(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getRandomId() {
+	return Math.floor(Math.random() * 1e10);
 }
 
 function getRoot(): vscode.Uri {
@@ -249,9 +262,58 @@ function runProcess(command: string, args: string[], cancelEmitter: vscode.Event
 	});
 }
 
-function runDaemonProcess(command: string, args: string[]) {
+async function waitForDaemonFinish(uniqueid: number){
+	// Loop until we find the program
+	await timeout(100);
+	let programID = -1;
+	while(programID == -1){
+		let programs = await psLookup({command: 'dreamdaemon.exe', arguments: `test-id=${uniqueid}`});
+		if(programs.length > 0){
+			programID = programs[0].pid;
+			break;
+		}
+
+		await timeout(1000);
+	}
+	
+	// Loop until we don't find the program
+	while((await psLookup({pid: programID})).length > 0){
+		await timeout(1000);
+	}
+}
+
+async function runDaemonProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>) {
+	let uniqueid = getRandomId();
+
+	args.push('-params', `test-id=${uniqueid}`);
+
 	let joinedArgs = args.join(' ');
 	child.exec(`"${command}" ${joinedArgs}`);
+
+	let cancelListener: vscode.Disposable|undefined;
+	let cancelPromise = new Promise<void>((_,reject) => {
+		cancelListener = cancelEmitter.event(_ => {
+			psLookup({command: 'dreamdaemon.exe', arguments: `test-id=${uniqueid}`})
+				.then(programs => {
+					if(programs.length > 0){
+						psKill(programs[0].pid).catch();
+						if(cancelListener != undefined){
+							cancelListener.dispose();
+						}
+						reject('Canceled');
+					}
+				});
+		})
+	});
+
+	await Promise.race([
+		waitForDaemonFinish(uniqueid),
+		cancelPromise
+	]);
+	
+	if(cancelListener != undefined){
+		cancelListener.dispose();
+	}
 }
 
 async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>) {
@@ -281,7 +343,7 @@ async function runDMB(path: string, cancelEmitter: vscode.EventEmitter<void>) {
 	if(ddpath == undefined){
 		throw Error("Dreamdaemon path not set");
 	}
-	runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params "log-directory=unit_test"']);
+	await runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
 
 	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
 	// A workaround is to monitor game.log for the "server reboot" message.
