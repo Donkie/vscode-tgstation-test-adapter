@@ -262,29 +262,59 @@ function runProcess(command: string, args: string[], cancelEmitter: vscode.Event
 	});
 }
 
-async function waitForDaemonFinish(uniqueid: number){
-	// Loop until we find the program
-	await timeout(100);
-	let programID = -1;
-	while(programID == -1){
-		let programs = await psLookup({command: 'dreamdaemon.exe', arguments: `test-id=${uniqueid}`});
-		if(programs.length > 0){
-			programID = programs[0].pid;
-			break;
-		}
+async function waitForDaemonFinish(){
+	let root = getRoot();
 
-		await timeout(1000);
+	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
+	// A workaround is to monitor game.log for the "server reboot" message.
+	function waitForGameLog(): Promise<void>{
+		return new Promise<void>((resolve, _) => {
+			let dirwatcher = fs.watch(`${root.fsPath}/data/logs/unit_test`);
+			dirwatcher.on('change', (_, filename) => {
+				if (filename == 'game.log') {
+					dirwatcher.close();
+					resolve();
+				}
+			});
+		});
 	}
-	
-	// Loop until we don't find the program
-	while((await psLookup({pid: programID})).length > 0){
-		await timeout(1000);
+
+	function waitForWorldReboot(): Promise<void>{
+		return new Promise<void>((resolve, reject) => {
+			let filewatcher = fs.watch(`${root.fsPath}/data/logs/unit_test/game.log`);
+			filewatcher.on('change', (_, __) => {
+				fsp.open(`${root.fsPath}/data/logs/unit_test/game.log`, 'r')
+					.then(handle => {
+						handle.readFile()
+							.then(buf => buf.toString())
+							.then(contents => {
+								handle.close();
+								if (/Rebooting World\. Round ended\./.exec(contents) != null) {
+									filewatcher.close();
+									resolve();
+								}
+							})
+							.catch(err => {
+								filewatcher.close();
+								reject(err);
+							})
+					})
+					.catch(err => {
+						filewatcher.close();
+						reject(err);
+					})
+			})
+		});
 	}
+
+	await waitForGameLog();
+	await waitForWorldReboot();
 }
 
 async function runDaemonProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>) {
 	let uniqueid = getRandomId();
 
+	// Set a unique test-id so we can identify the process for killing it later
 	args.push('-params', `test-id=${uniqueid}`);
 
 	let joinedArgs = args.join(' ');
@@ -296,18 +326,18 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 			psLookup({command: 'dreamdaemon.exe', arguments: `test-id=${uniqueid}`})
 				.then(programs => {
 					if(programs.length > 0){
-						psKill(programs[0].pid).catch();
-						if(cancelListener != undefined){
-							cancelListener.dispose();
-						}
-						reject('Canceled');
+						psKill(programs[0].pid).catch(_ => {});
 					}
 				});
+			if(cancelListener != undefined){
+				cancelListener.dispose();
+			}
+			reject('Canceled');
 		})
 	});
 
 	await Promise.race([
-		waitForDaemonFinish(uniqueid),
+		waitForDaemonFinish(),
 		cancelPromise
 	]);
 	
@@ -317,6 +347,7 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 }
 
 async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>) {
+	/*
 	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
 		throw Error("Dreammaker path not set");
@@ -326,7 +357,7 @@ async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
 	}
-
+*/
 	let root = getRoot();
 	let projectName = await getProjectName();
 	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
@@ -345,38 +376,6 @@ async function runDMB(path: string, cancelEmitter: vscode.EventEmitter<void>) {
 	}
 	await runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
 
-	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
-	// A workaround is to monitor game.log for the "server reboot" message.
-	// tfw u work with promises but still end up in callback hell
-	return new Promise<void>((resolve, reject) => {
-		let cancelListener = cancelEmitter.event(_ => {
-			reject("Canceled");
-		});
-
-		let dirwatcher = fs.watch(`${root.fsPath}/data/logs/unit_test`);
-		dirwatcher.on('change', (_, filename) => {
-			if (filename == 'game.log') {
-				dirwatcher.close();
-
-				let filewatcher = fs.watch(`${root.fsPath}/data/logs/unit_test/game.log`);
-				filewatcher.on('change', (_, __) => {
-					fsp.open(`${root.fsPath}/data/logs/unit_test/game.log`, 'r')
-						.then(handle => {
-							handle.readFile()
-								.then(buf => buf.toString())
-								.then(contents => {
-									handle.close();
-									if (/Rebooting World\. Round ended\./.exec(contents) != null) {
-										filewatcher.close();
-										cancelListener.dispose();
-										resolve();
-									}
-								});
-						});
-				})
-			}
-		})
-	});
 }
 
 interface PassedTest {
@@ -462,7 +461,7 @@ async function runTest(cancelEmitter: vscode.EventEmitter<void>): Promise<TestLo
 
 	let testLog = await readTestsLog();
 
-	await cleanupTest();
+	//await cleanupTest();
 
 	return testLog;
 }

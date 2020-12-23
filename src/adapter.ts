@@ -14,6 +14,7 @@ export class DMAdapter implements TestAdapter {
 
 	private isLoading = false;
 	private isRunning = false;
+	private isCanceling = false;
 	private loadedTests: TestSuiteInfo | undefined;
 
 	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> { return this.testsEmitter.event; }
@@ -59,9 +60,11 @@ export class DMAdapter implements TestAdapter {
 			throw Error("Tests not loaded yet");
 		}
 		if (this.isRunning){
+			console.log("Can't start running yet, still running");
 			return;
 		}
 
+		console.log("Start running");
 		this.isRunning = true;
 
 		let allTestSuites = this.loadedTests.children.map(suite => suite.id);
@@ -71,11 +74,24 @@ export class DMAdapter implements TestAdapter {
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
 
+		console.log("Stop running");
 		this.isRunning = false;
+		this.isCanceling = false;
 	}
 
 	cancel(): void {
+		if (!this.isRunning){
+			console.log("Can't cancel, not running");
+			return;
+		}
+		if (this.isCanceling){
+			console.log("Can't cancel, already canceling");
+			return;
+		}
+		console.log("Start canceling");
+		this.isCanceling = true;
 		this.cancelEmitter.fire();
+		console.log("Stop canceling");
 	}
 
 	dispose(): void {
