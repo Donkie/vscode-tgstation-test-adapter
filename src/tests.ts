@@ -241,7 +241,7 @@ async function makeTestDME() {
 	return testDMEPath;
 }
 
-function runProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>): Promise<string> {
+async function runProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>){
 	return new Promise<string>((resolve, reject) => {
 		let stdout = '';
 		let process = child.spawn(command, args);
@@ -262,53 +262,68 @@ function runProcess(command: string, args: string[], cancelEmitter: vscode.Event
 	});
 }
 
+async function waitForFileInDirChange(dir: string, filename: string){
+	return new Promise<void>((resolve, reject) => {
+		let dirwatcher = fs.watch(dir);
+		dirwatcher.on('error', err => {
+			dirwatcher.close();
+			reject(err);
+		})
+		dirwatcher.on('change', (_, fname) => {
+			if (fname === filename) {
+				dirwatcher.close();
+				resolve();
+			}
+		});
+	});
+}
+
+async function readFileContents(filepath: string){
+	let handle = await fsp.open(filepath, 'r');
+	let contents: string;
+	try{
+		let buf = await handle.readFile();
+		contents = buf.toString();
+	} catch(err){
+		handle.close();
+		throw err;
+	}
+	handle.close();
+	return contents;
+}
+
+async function waitForFileChange(filepath: string, checkdone: (contents: string) => boolean){
+	return new Promise<void>((resolve, reject) => {
+		let filewatcher = fs.watch(filepath);
+		filewatcher.on('error', err => {
+			filewatcher.close();
+			reject(err);
+		})
+		filewatcher.on('change', (_, __) => {
+			readFileContents(filepath)
+				.then(contents => {
+					if(checkdone(contents)){
+						filewatcher.close();
+						resolve();
+					}
+				})
+				.catch(err => {
+					filewatcher.close();
+					reject(err);
+				})
+		})
+	});
+}
+
 async function waitForDaemonFinish(){
 	let root = getRoot();
 
 	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
 	// A workaround is to monitor game.log for the "server reboot" message.
-	function waitForGameLog(): Promise<void>{
-		return new Promise<void>((resolve, _) => {
-			let dirwatcher = fs.watch(`${root.fsPath}/data/logs/unit_test`);
-			dirwatcher.on('change', (_, filename) => {
-				if (filename == 'game.log') {
-					dirwatcher.close();
-					resolve();
-				}
-			});
-		});
-	}
-
-	function waitForWorldReboot(): Promise<void>{
-		return new Promise<void>((resolve, reject) => {
-			let filewatcher = fs.watch(`${root.fsPath}/data/logs/unit_test/game.log`);
-			filewatcher.on('change', (_, __) => {
-				fsp.open(`${root.fsPath}/data/logs/unit_test/game.log`, 'r')
-					.then(handle => {
-						handle.readFile()
-							.then(buf => buf.toString())
-							.then(contents => {
-								handle.close();
-								if (/Rebooting World\. Round ended\./.exec(contents) != null) {
-									filewatcher.close();
-									resolve();
-								}
-							})
-							.catch(err => {
-								filewatcher.close();
-								reject(err);
-							})
-					})
-					.catch(err => {
-						filewatcher.close();
-						reject(err);
-					})
-			})
-		});
-	}
-
-	await waitForGameLog();
-	await waitForWorldReboot();
+	await waitForFileInDirChange(`${root.fsPath}/data/logs/unit_test`, 'game.log');
+	await waitForFileChange(`${root.fsPath}/data/logs/unit_test/game.log`, contents => {
+		return /Rebooting World\. Round ended\./.exec(contents) !== null;
+	});
 }
 
 async function runDaemonProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>) {
