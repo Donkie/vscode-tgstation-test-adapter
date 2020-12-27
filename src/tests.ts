@@ -2,13 +2,9 @@ import * as vscode from 'vscode';
 import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent } from 'vscode-test-adapter-api';
 import * as child from 'child_process';
 import { promises as fsp } from 'fs';
-import * as fs from 'fs';
 import * as path from 'path';
-import * as util from 'util';
-import * as ps from 'ps-node';
-
-const psLookup = util.promisify(ps.lookup);
-const psKill = util.promisify(ps.kill);
+import { EventEmitter } from 'vscode';
+import { DreamDaemonProcess } from './DreamDaemonProcess';
 
 async function exists(fileordir: string) {
 	try {
@@ -39,16 +35,12 @@ async function rmDir(directory: string) {
 		await fsp.unlink(directory);
 	} catch {}
 }
-
+/*
 function timeout(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-
-function getRandomId() {
-	return Math.floor(Math.random() * 1e10);
-}
-
-function getRoot(): vscode.Uri {
+*/
+export function getRoot(): vscode.Uri {
 	let wsFolders = vscode.workspace.workspaceFolders;
 	if (wsFolders == null) {
 		throw Error("No workspace open");
@@ -137,7 +129,7 @@ export function loadTests(): Promise<TestSuiteInfo> {
 export async function runAllTests(
 	tests: (TestSuiteInfo | TestInfo)[],
 	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
-	cancelEmitter: vscode.EventEmitter<void>
+	cancelEmitter: EventEmitter<void>
 ): Promise<void> {
 
 	let allTests: string[] = [];
@@ -241,13 +233,13 @@ async function makeTestDME() {
 	return testDMEPath;
 }
 
-async function runProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>){
+async function runProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>){
 	return new Promise<string>((resolve, reject) => {
 		let stdout = '';
 		let process = child.spawn(command, args);
 		let cancelListener = cancelEmitter.event(_ => {
 			process.kill();
-			reject("Canceled");
+			reject(new Error("Canceled"));
 		});
 		process.stdout.on('data', (data: Buffer) => {
 			stdout += data;
@@ -262,106 +254,16 @@ async function runProcess(command: string, args: string[], cancelEmitter: vscode
 	});
 }
 
-async function waitForFileInDirChange(dir: string, filename: string){
-	return new Promise<void>((resolve, reject) => {
-		let dirwatcher = fs.watch(dir);
-		dirwatcher.on('error', err => {
-			dirwatcher.close();
-			reject(err);
-		})
-		dirwatcher.on('change', (_, fname) => {
-			if (fname === filename) {
-				dirwatcher.close();
-				resolve();
-			}
-		});
-	});
+async function runDaemonProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
+	let daemon = new DreamDaemonProcess(command, args);
+	cancelEmitter.event(_ => {
+		// Disposing the daemon object will cause the waitForFinish method to throw an "Canceled" error, thus this lets us exit early.
+		daemon.dispose();
+	})
+	await daemon.waitForFinish();
 }
 
-async function readFileContents(filepath: string){
-	let handle = await fsp.open(filepath, 'r');
-	let contents: string;
-	try{
-		let buf = await handle.readFile();
-		contents = buf.toString();
-	} catch(err){
-		handle.close();
-		throw err;
-	}
-	handle.close();
-	return contents;
-}
-
-async function waitForFileChange(filepath: string, checkdone: (contents: string) => boolean){
-	return new Promise<void>((resolve, reject) => {
-		let filewatcher = fs.watch(filepath);
-		filewatcher.on('error', err => {
-			filewatcher.close();
-			reject(err);
-		})
-		filewatcher.on('change', (_, __) => {
-			readFileContents(filepath)
-				.then(contents => {
-					if(checkdone(contents)){
-						filewatcher.close();
-						resolve();
-					}
-				})
-				.catch(err => {
-					filewatcher.close();
-					reject(err);
-				})
-		})
-	});
-}
-
-async function waitForDaemonFinish(){
-	let root = getRoot();
-
-	// Since the server is being run as a daemon, we don't get direct access to its output and we don't really know when its finished.
-	// A workaround is to monitor game.log for the "server reboot" message.
-	await waitForFileInDirChange(`${root.fsPath}/data/logs/unit_test`, 'game.log');
-	await waitForFileChange(`${root.fsPath}/data/logs/unit_test/game.log`, contents => {
-		return /Rebooting World\. Round ended\./.exec(contents) !== null;
-	});
-}
-
-async function runDaemonProcess(command: string, args: string[], cancelEmitter: vscode.EventEmitter<void>) {
-	let uniqueid = getRandomId();
-
-	// Set a unique test-id so we can identify the process for killing it later
-	args.push('-params', `test-id=${uniqueid}`);
-
-	let joinedArgs = args.join(' ');
-	child.exec(`"${command}" ${joinedArgs}`);
-
-	let cancelListener: vscode.Disposable|undefined;
-	let cancelPromise = new Promise<void>((_,reject) => {
-		cancelListener = cancelEmitter.event(_ => {
-			psLookup({command: 'dreamdaemon.exe', arguments: `test-id=${uniqueid}`})
-				.then(programs => {
-					if(programs.length > 0){
-						psKill(programs[0].pid).catch(_ => {});
-					}
-				});
-			if(cancelListener != undefined){
-				cancelListener.dispose();
-			}
-			reject('Canceled');
-		})
-	});
-
-	await Promise.race([
-		waitForDaemonFinish(),
-		cancelPromise
-	]);
-	
-	if(cancelListener != undefined){
-		cancelListener.dispose();
-	}
-}
-
-async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>) {
+async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	/*
 	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
@@ -379,7 +281,7 @@ async function compileDME(path: string, cancelEmitter: vscode.EventEmitter<void>
 	return testDMBPath;
 }
 
-async function runDMB(path: string, cancelEmitter: vscode.EventEmitter<void>) {
+async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	let root = getRoot();
 
 	await rmDir(`${root.fsPath}/data/logs/unit_test`);
@@ -457,7 +359,7 @@ async function readTestsLog(): Promise<TestLog> {
 		failed_tests: failed_tests
 	};
 }
-
+/*
 async function cleanupTest(){
 	let root = getRoot();
 	let projectName = await getProjectName();
@@ -466,8 +368,8 @@ async function cleanupTest(){
 	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`);
 	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`);
 }
-
-async function runTest(cancelEmitter: vscode.EventEmitter<void>): Promise<TestLog> {
+*/
+async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
 	let testDMEPath = await makeTestDME();
 
 	let testDMBPath = await compileDME(testDMEPath, cancelEmitter);

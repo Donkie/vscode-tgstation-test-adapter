@@ -1,4 +1,4 @@
-import * as vscode from 'vscode';
+import { Event, EventEmitter, WorkspaceFolder } from 'vscode';
 import { TestAdapter, TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent, TestSuiteInfo, RetireEvent } from 'vscode-test-adapter-api';
 import { Log } from 'vscode-test-adapter-util';
 import { loadTests, runAllTests } from './tests';
@@ -7,22 +7,23 @@ import * as util from 'util';
 export class DMAdapter implements TestAdapter {
 	private disposables: { dispose(): void }[] = [];
 
-	private readonly testsEmitter = new vscode.EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
-	private readonly testStatesEmitter = new vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
-	private readonly retireEmitter = new vscode.EventEmitter<RetireEvent>();
-	private readonly cancelEmitter = new vscode.EventEmitter<void>();
+	private cancelEmitter: EventEmitter<void> = new EventEmitter<void>();
+
+	private readonly testsEmitter = new EventEmitter<TestLoadStartedEvent | TestLoadFinishedEvent>();
+	private readonly testStatesEmitter = new EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>();
+	private readonly retireEmitter = new EventEmitter<RetireEvent>();
 
 	private isLoading = false;
 	private isRunning = false;
 	private isCanceling = false;
 	private loadedTests: TestSuiteInfo | undefined;
 
-	get tests(): vscode.Event<TestLoadStartedEvent | TestLoadFinishedEvent> { return this.testsEmitter.event; }
-	get testStates(): vscode.Event<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent> { return this.testStatesEmitter.event; }
-	get retire(): vscode.Event<RetireEvent> { return this.retireEmitter.event; }
+	get tests(): Event<TestLoadStartedEvent | TestLoadFinishedEvent> { return this.testsEmitter.event; }
+	get testStates(): Event<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent> { return this.testStatesEmitter.event; }
+	get retire(): Event<RetireEvent> { return this.retireEmitter.event; }
 
 	constructor(
-		public readonly workspace: vscode.WorkspaceFolder,
+		public readonly workspace: WorkspaceFolder,
 		private readonly log: Log
 	) {
 		this.log.info('Initializing tgstation test adapter');
@@ -30,7 +31,6 @@ export class DMAdapter implements TestAdapter {
 		this.disposables.push(this.testsEmitter);
 		this.disposables.push(this.testStatesEmitter);
 		this.disposables.push(this.retireEmitter);
-		this.disposables.push(this.cancelEmitter);
 	}
 
 	async load(): Promise<void> {
@@ -60,11 +60,9 @@ export class DMAdapter implements TestAdapter {
 			throw Error("Tests not loaded yet");
 		}
 		if (this.isRunning){
-			console.log("Can't start running yet, still running");
 			return;
 		}
 
-		console.log("Start running");
 		this.isRunning = true;
 
 		let allTestSuites = this.loadedTests.children.map(suite => suite.id);
@@ -74,28 +72,28 @@ export class DMAdapter implements TestAdapter {
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
 
-		console.log("Stop running");
+		// Reset any cancel listeners since theres nothing to cancel anymore
+		this.cancelEmitter.dispose();
+		this.cancelEmitter = new EventEmitter<void>();
+
 		this.isRunning = false;
 		this.isCanceling = false;
 	}
 
 	cancel(): void {
 		if (!this.isRunning){
-			console.log("Can't cancel, not running");
 			return;
 		}
 		if (this.isCanceling){
-			console.log("Can't cancel, already canceling");
 			return;
 		}
-		console.log("Start canceling");
 		this.isCanceling = true;
 		this.cancelEmitter.fire();
-		console.log("Stop canceling");
 	}
 
 	dispose(): void {
 		this.cancel();
+		this.cancelEmitter.dispose();
 		for (const disposable of this.disposables) {
 			disposable.dispose();
 		}
