@@ -10,10 +10,16 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true,
     "removeComments": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "typeRoots": [ "typings", "node_modules/@types"]
   },
   "include": [
-    "src/main.ts"
+    "src/main.ts",
+    "@types/*"
+  ],
+  "exclude": [
+      "node_modules",
+      "typings"
   ]
 }
   

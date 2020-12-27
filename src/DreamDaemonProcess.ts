@@ -1,13 +1,9 @@
 import { exec } from 'child_process';
 import { EventEmitter, Disposable } from 'vscode';
 import { getRoot } from './tests';
-import * as util from 'util';
-import * as ps from 'ps-node';
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
-
-const psLookup = util.promisify(ps.lookup);
-const psKill = util.promisify(ps.kill);
+import * as process from './process';
 
 function getRandomId() {
 	return Math.floor(Math.random() * 1e10);
@@ -113,7 +109,7 @@ export class DreamDaemonProcess implements Disposable {
 		if (this.isRunning) {
 			this.cancelEmitter.fire();
 
-			psLookup({ command: 'dreamdaemon.exe', arguments: `test-id=${this.uniqueId}` })
+			process.Lookup('dreamdaemon.exe', `test-id=${this.uniqueId}`)
 				.then(programs => {
 					if (programs.length == 0) {
 						return;
@@ -121,7 +117,7 @@ export class DreamDaemonProcess implements Disposable {
 					if (programs.length > 1) {
 						throw new Error("Multiple dream daemon processes with same unique id detected.");
 					}
-					psKill(programs[0].pid).catch(_ => { });
+					process.Kill(programs[0]);
 				})
 				.catch(err => {
 					console.error(err);
