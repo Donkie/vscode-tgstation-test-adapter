@@ -35,11 +35,7 @@ async function rmDir(directory: string) {
 		await fsp.unlink(directory);
 	} catch {}
 }
-/*
-function timeout(ms: number) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
-*/
+
 export function getRoot(): vscode.Uri {
 	let wsFolders = vscode.workspace.workspaceFolders;
 	if (wsFolders == null) {
@@ -264,7 +260,6 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 }
 
 async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
-	/*
 	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
 		throw Error("Dreammaker path not set");
@@ -274,7 +269,7 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
 	}
-*/
+
 	let root = getRoot();
 	let projectName = await getProjectName();
 	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
@@ -359,7 +354,7 @@ async function readTestsLog(): Promise<TestLog> {
 		failed_tests: failed_tests
 	};
 }
-/*
+
 async function cleanupTest(){
 	let root = getRoot();
 	let projectName = await getProjectName();
@@ -368,7 +363,7 @@ async function cleanupTest(){
 	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`);
 	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`);
 }
-*/
+
 async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
 	let testDMEPath = await makeTestDME();
 
@@ -378,7 +373,7 @@ async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
 
 	let testLog = await readTestsLog();
 
-	//await cleanupTest();
+	await cleanupTest();
 
 	return testLog;
 }
