@@ -5,7 +5,7 @@
   "icon": "img/icon.png",
   "author": "Daniel Hultgren <daniel.cf.hultgren@gmail.com>",
   "publisher": "Donkie",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "license": "MIT",
   "homepage": "https://github.com/Donkie/vscode-tgstation-test-adapter",
   "repository": {
