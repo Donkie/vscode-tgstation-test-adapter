@@ -13,7 +13,7 @@ function getRandomId() {
 	return Math.floor(Math.random() * 1e10);
 }
 
-async function waitForFileInDirChange(dir: string, filename: string, cancelEmitter: EventEmitter<void>){
+async function waitForFileInDirChange(dir: string, filename: string, cancelEmitter: EventEmitter<void>) {
 	return new Promise<void>((resolve, reject) => {
 		let dirwatcher = fs.watch(dir);
 		let cancelEmitterHandle = cancelEmitter.event(_ => {
@@ -34,13 +34,13 @@ async function waitForFileInDirChange(dir: string, filename: string, cancelEmitt
 	});
 }
 
-async function readFileContents(filepath: string){
+async function readFileContents(filepath: string) {
 	let handle = await fsp.open(filepath, 'r');
 	let contents: string;
-	try{
+	try {
 		let buf = await handle.readFile();
 		contents = buf.toString();
-	} catch(err){
+	} catch (err) {
 		handle.close();
 		throw err;
 	}
@@ -48,7 +48,7 @@ async function readFileContents(filepath: string){
 	return contents;
 }
 
-async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<void>, checkdone: (contents: string) => boolean){
+async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<void>, checkdone: (contents: string) => boolean) {
 	return new Promise<void>((resolve, reject) => {
 		let filewatcher = fs.watch(filepath);
 		let cancelEmitterHandle = cancelEmitter.event(_ => {
@@ -62,7 +62,7 @@ async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<v
 		filewatcher.on('change', (_, __) => {
 			readFileContents(filepath)
 				.then(contents => {
-					if(checkdone(contents)){
+					if (checkdone(contents)) {
 						cancelEmitterHandle.dispose();
 						filewatcher.close();
 						resolve();
@@ -82,6 +82,7 @@ async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<v
  */
 export class DreamDaemonProcess implements Disposable {
 	private isRunning = false;
+	private isDisposed = false;
 	private uniqueId: number | undefined;
 	private readonly cancelEmitter = new EventEmitter<void>();
 
@@ -110,6 +111,11 @@ export class DreamDaemonProcess implements Disposable {
 	}
 
 	dispose() {
+		if (this.isDisposed) {
+			return;
+		}
+		this.isDisposed = true;
+
 		if (this.isRunning) {
 			this.cancelEmitter.fire();
 

@@ -10,30 +10,30 @@ async function exists(fileordir: string) {
 	try {
 		await fsp.access(fileordir);
 		return true;
-	} catch(err) {
+	} catch (err) {
 		return false;
 	}
 }
 
 async function mkDir(directory: string) {
 	let direxists = await exists(directory);
-	if(!direxists){
+	if (!direxists) {
 		await fsp.mkdir(directory);
 	}
 }
 
 async function rmDir(directory: string) {
 	let dirExists = await exists(directory);
-	if(!dirExists){
+	if (!dirExists) {
 		return;
 	}
 	let files = await fsp.readdir(directory);
 	await Promise.all(
 		files.map(file => fsp.unlink(path.join(directory, file)))
 	);
-	try{
+	try {
 		await fsp.unlink(directory);
-	} catch {}
+	} catch { }
 }
 
 export function getRoot(): vscode.Uri {
@@ -44,19 +44,19 @@ export function getRoot(): vscode.Uri {
 	return wsFolders[0].uri;
 }
 
-function removeExtension(file: string){
+function removeExtension(file: string) {
 	let parts = file.split('.');
 	parts.pop();
 	return parts.join('.');
 }
 
-function getFileFromPath(filePath: string){
+function getFileFromPath(filePath: string) {
 	let parts = filePath.split('/');
 	return parts[parts.length - 1];
 }
 
-function trimStart(subject: string, text: string){
-	if(subject.startsWith(text)){
+function trimStart(subject: string, text: string) {
+	if (subject.startsWith(text)) {
 		return subject.substring(text.length);
 	}
 	return subject;
@@ -67,7 +67,7 @@ interface FoundLine {
 	lineNumber: number
 }
 
-async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp){
+async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	const doc = await vscode.workspace.openTextDocument(filePath);
 	const text = doc.getText();
 	const lines = text.split('\n');
@@ -79,20 +79,20 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp){
 		lineNumber++;
 		const match = lineRegexp.exec(line);
 		if (match != null) {
-			foundLines.push({match, lineNumber});
+			foundLines.push({ match, lineNumber });
 		}
 	});
 
 	return foundLines;
 }
 
-async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp){
+async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	const tests: TestInfo[] = [];
 
 	const testLines = await locateLineInFile(filePath, lineRegexp);
-	for(const testLine of testLines){
+	for (const testLine of testLines) {
 		const testName = testLine.match[1];
-		if(testName === 'proc'){
+		if (testName === 'proc') {
 			continue;
 		}
 		tests.push({
@@ -116,20 +116,20 @@ async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp){
 	return suite;
 }
 
-function getUnitTestsGlob(){
-	let glob: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDirectory');
+function getUnitTestsGlob() {
+	let glob: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDirectory');
 	return glob ?? 'code/modules/unit_tests/*.dm';
 }
 
-function getUnitTestsDef(){
-	let def: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDefinitionRegex');
-	if(!def){
+function getUnitTestsDef() {
+	let def: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDefinitionRegex');
+	if (!def) {
 		return /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
 	}
 	return new RegExp(def, 'gm');
 }
 
-export async function loadTests(){
+export async function loadTests() {
 	const unitTestsDef = getUnitTestsDef();
 
 	const uris = await vscode.workspace.findFiles(getUnitTestsGlob());
@@ -139,7 +139,7 @@ export async function loadTests(){
 	testSuites = testSuites.filter(val => {
 		return val.children.length > 0;
 	});
-	
+
 	// Sort suites
 	testSuites = testSuites.sort((a, b) => {
 		return a.label.localeCompare(b.label);
@@ -172,15 +172,16 @@ export async function runAllTests(
 		})
 	})
 
-	let testLog: TestLog|undefined;
+	let testLog: TestLog | undefined;
 	try {
 		testLog = await runTest(cancelEmitter);
 	}
 	catch (err) {
-		if(err != 'Canceled'){
-			if(err instanceof Error){
+		if (err != 'Canceled') {
+			if (err instanceof Error) {
 				let errobj: Error = err;
-				err = `${errobj.name}: ${errobj.message}\n${errobj.stack ?? ''}`;
+				// The stack contain the name and message already, so if it exists we don't need to print them.
+				err = errobj.stack ?? `${errobj.name}: ${errobj.message}`;
 			}
 			// Mark tests as errored if we catch an error
 			allTests.forEach(test => {
@@ -228,29 +229,29 @@ export async function runAllTests(
 	});
 }
 
-async function getProjectName(){
-	let dmefilename: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.DMEName');
-	if(dmefilename == undefined){
+async function getProjectName() {
+	let dmefilename: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.DMEName');
+	if (dmefilename == undefined) {
 		throw Error(".dme name not set");
 	}
 
 	let root = getRoot();
 	let dmeexists = await exists(`${root.fsPath}/${dmefilename}`);
-	if(!dmeexists){
+	if (!dmeexists) {
 		throw Error(`${dmefilename} does not exist in the current workspace. You can change this in the Tgstation Test Explorer workspace settings.`);
 	}
-	
+
 	let projectname = dmefilename.substring(0, dmefilename.length - 4);
 	return projectname;
 }
 
-async function writeDefines(fd: fsp.FileHandle){
-	let defines: string[]|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.defines');
-	if(defines == undefined){
+async function writeDefines(fd: fsp.FileHandle) {
+	let defines: string[] | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.defines');
+	if (defines == undefined) {
 		return;
 	}
-	
-	for(const define of defines){
+
+	for (const define of defines) {
 		await fd.write(`${define}\n`);
 	}
 }
@@ -276,7 +277,7 @@ async function makeTestDME() {
 	return testDMEPath;
 }
 
-async function runProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>){
+async function runProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
 	return new Promise<string>((resolve, reject) => {
 		let stdout = '';
 		let process = child.spawn(command, args);
@@ -303,19 +304,19 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 		// Disposing the daemon object will cause the waitForFinish method to throw an "Canceled" error, thus this lets us exit early.
 		daemon.dispose();
 	})
-	try{
+	try {
 		await daemon.waitForFinish();
 	}
-	catch(err){
+	catch (err) {
 		daemon.dispose();
 		throw err;
 	}
 }
 
 async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
-	
-	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
-	if(dmpath == undefined){
+
+	let dmpath: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
+	if (dmpath == undefined) {
 		throw Error("Dreammaker path not set");
 	}
 
@@ -323,7 +324,7 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
 	}
-	
+
 	let root = getRoot();
 	let projectName = await getProjectName();
 	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
@@ -333,13 +334,17 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	let root = getRoot();
 
+	if (!await exists(path)) {
+		throw Error(`Can't start dreamdaemon, ${path} does not exist!`);
+	}
+
 	await rmDir(`${root.fsPath}/data/logs/unit_test`);
 	await mkDir(`${root.fsPath}/data`);
 	await mkDir(`${root.fsPath}/data/logs`);
 	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
 
-	let ddpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreamdaemon');
-	if(ddpath == undefined){
+	let ddpath: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreamdaemon');
+	if (ddpath == undefined) {
 		throw Error("Dreamdaemon path not set");
 	}
 	await runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
@@ -369,16 +374,16 @@ type TestLogResult = {
 	name: string
 }
 
-async function readTestsJson(){
+async function readTestsJson() {
 	const root = getRoot();
 	const fdTestLog = await fsp.open(`${root.fsPath}/data/unit_tests.json`, 'r');
 	const buf = await fdTestLog.readFile();
-	const results: {[key: string]: TestLogResult} = JSON.parse(buf.toString());
+	const results: { [key: string]: TestLogResult } = JSON.parse(buf.toString());
 
 	await fdTestLog.close();
 
 	const testlog = new TestLog();
-	for(const type in results){
+	for (const type in results) {
 		const data = results[type];
 		const result = <TestResult>{
 			id: trimStart(type, '/datum/unit_test/'),
@@ -444,8 +449,8 @@ async function readTestsLog() {
 	return testlog;
 }
 
-async function readTestsResults(){
-	const resultsType: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.resultsType');
+async function readTestsResults() {
+	const resultsType: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.resultsType');
 	switch (resultsType ?? 'log') {
 		case 'log':
 			return await readTestsLog();
@@ -456,7 +461,7 @@ async function readTestsResults(){
 	}
 }
 
-async function cleanupTest(){
+async function cleanupTest() {
 	let root = getRoot();
 	let projectName = await getProjectName();
 	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dmb`).catch(console.warn);

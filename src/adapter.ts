@@ -34,7 +34,7 @@ export class DMAdapter implements TestAdapter {
 	}
 
 	async load(): Promise<void> {
-		if (this.isLoading){
+		if (this.isLoading) {
 			return;
 		}
 
@@ -43,11 +43,11 @@ export class DMAdapter implements TestAdapter {
 
 		this.testsEmitter.fire({ type: 'started' });
 
-		try{
+		try {
 			this.loadedTests = await loadTests();
 			this.testsEmitter.fire({ type: 'finished', suite: this.loadedTests });
-		} catch(e) {
-			this.testsEmitter.fire({ type: 'finished', errorMessage: util.inspect(e)});
+		} catch (e) {
+			this.testsEmitter.fire({ type: 'finished', errorMessage: util.inspect(e) });
 		}
 
 		this.retireEmitter.fire({});
@@ -59,7 +59,7 @@ export class DMAdapter implements TestAdapter {
 		if (this.loadedTests == undefined) {
 			throw Error("Tests not loaded yet");
 		}
-		if (this.isRunning){
+		if (this.isRunning) {
 			return;
 		}
 
@@ -81,10 +81,10 @@ export class DMAdapter implements TestAdapter {
 	}
 
 	cancel(): void {
-		if (!this.isRunning){
+		if (!this.isRunning) {
 			return;
 		}
-		if (this.isCanceling){
+		if (this.isCanceling) {
 			return;
 		}
 		this.isCanceling = true;
