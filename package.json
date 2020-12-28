@@ -89,6 +89,26 @@
             "#define CIBUILDING",
             "#define LOWMEMORYMODE"
           ]
+        },
+        "tgstationTestExplorer.project.unitTestsDirectory": {
+          "type": "string",
+          "description": "A glob specifying the files containing the unit test definitions.",
+          "scope": "resource",
+          "default": "code/modules/unit_tests/*.dm"
+        },
+        "tgstationTestExplorer.project.unitTestsDefinitionRegex": {
+          "type": "string",
+          "description": "A regex pattern used for locating unit test definitions. Must contain one capture group, which should return the id of the test.",
+          "scope": "resource",
+          "default": "/datum/unit_test/([\\w/]+)/Run\\s*\\("
+        },
+        "tgstationTestExplorer.project.resultsType": {
+          "type": "string",
+          "description": "How test results are interpreted.",
+          "scope": "resource",
+          "default": ["log"],
+          "enum": ["log", "json"],
+          "enumDescriptions": ["Parsing unit test log files", "Parsing the new standardized unit_test.json file"]
         }
       }
     }

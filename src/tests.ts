@@ -44,82 +44,115 @@ export function getRoot(): vscode.Uri {
 	return wsFolders[0].uri;
 }
 
-export function loadTests(): Promise<TestSuiteInfo> {
-	let root = getRoot();
+function removeExtension(file: string){
+	let parts = file.split('.');
+	parts.pop();
+	return parts.join('.');
+}
 
-	let a = vscode.workspace.openTextDocument(vscode.Uri.parse(`${root}/code/modules/unit_tests/_unit_tests.dm`))
-		.then(doc => {
-			let text = doc.getText();
-			let regexp = /#include "(\w+\.dm)"/gm;
-			let match = regexp.exec(text);
-			let test_files = [];
-			while (match != null) {
-				let test_name = match[1];
-				if (test_name != "unit_test.dm") {
-					test_files.push(test_name);
-				}
-				match = regexp.exec(text);
-			}
-			return test_files;
-		})
-		.then(test_files => {
-			let regexp = /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
-			let test_promises: Thenable<TestSuiteInfo>[] = [];
-			test_files.forEach(test_file => {
-				let file_uri = vscode.Uri.parse(`${root}/code/modules/unit_tests/${test_file}`);
-				test_promises.push(vscode.workspace.openTextDocument(file_uri)
-					.then(doc => {
-						let text = doc.getText();
-						let lines = text.split('\n');
-						let lineNumber = 0;
-						let tests: TestInfo[] = [];
-						lines.forEach(line => {
-							lineNumber++;
-							let match = regexp.exec(line);
-							if (match != null) {
-								let test_name = match[1];
-								tests.push({
-									type: 'test',
-									id: test_name,
-									label: test_name,
-									file: file_uri.fsPath,
-									line: lineNumber
-								});
-							}
-						});
-						return tests;
-					})
-					.then((tests: TestInfo[]) => {
-						let test_file_name = test_file.substring(0, test_file.length - 3);
-						let suite: TestSuiteInfo = {
-							type: 'suite',
-							id: `suite_${test_file_name}`,
-							label: test_file_name,
-							file: file_uri.fsPath,
-							children: tests
-						}
-						return suite;
-					}));
-			});
-			return Promise.all(test_promises);
-		})
-		.then((testSuites: TestSuiteInfo[]) => {
-			// Sort suites
-			testSuites = testSuites.sort((a, b) => {
-				return a.label.localeCompare(b.label);
-			});
+function getFileFromPath(filePath: string){
+	let parts = filePath.split('/');
+	return parts[parts.length - 1];
+}
 
-			const rootSuite: TestSuiteInfo = {
-				type: 'suite',
-				id: 'root',
-				label: 'DM',
-				children: testSuites
-			};
+function trimStart(subject: string, text: string){
+	if(subject.startsWith(text)){
+		return subject.substring(text.length);
+	}
+	return subject;
+}
 
-			return rootSuite;
-		})
+interface FoundLine {
+	match: RegExpExecArray,
+	lineNumber: number
+}
 
-	return Promise.resolve(a);
+async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp){
+	const doc = await vscode.workspace.openTextDocument(filePath);
+	const text = doc.getText();
+	const lines = text.split('\n');
+
+	let foundLines: FoundLine[] = [];
+
+	let lineNumber = 0;
+	lines.forEach(line => {
+		lineNumber++;
+		const match = lineRegexp.exec(line);
+		if (match != null) {
+			foundLines.push({match, lineNumber});
+		}
+	});
+
+	return foundLines;
+}
+
+async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp){
+	const tests: TestInfo[] = [];
+
+	const testLines = await locateLineInFile(filePath, lineRegexp);
+	for(const testLine of testLines){
+		const testName = testLine.match[1];
+		if(testName === 'proc'){
+			continue;
+		}
+		tests.push({
+			type: 'test',
+			id: testName,
+			label: testName,
+			file: filePath.toString(),
+			line: testLine.lineNumber
+		});
+	}
+
+	let suiteName = removeExtension(getFileFromPath(filePath.path));
+	let suite: TestSuiteInfo = {
+		type: 'suite',
+		id: `suite_${suiteName}`,
+		label: suiteName,
+		file: filePath.toString(),
+		children: tests
+	}
+
+	return suite;
+}
+
+function getUnitTestsGlob(){
+	let glob: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDirectory');
+	return glob ?? 'code/modules/unit_tests/*.dm';
+}
+
+function getUnitTestsDef(){
+	let def: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDefinitionRegex');
+	if(!def){
+		return /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
+	}
+	return new RegExp(def, 'gm');
+}
+
+export async function loadTests(){
+	const unitTestsDef = getUnitTestsDef();
+
+	const uris = await vscode.workspace.findFiles(getUnitTestsGlob());
+	let testSuites = await Promise.all(uris.map(uri => locateTestsInFile(uri, unitTestsDef)));
+
+	// Filter out suites without any tests
+	testSuites = testSuites.filter(val => {
+		return val.children.length > 0;
+	});
+	
+	// Sort suites
+	testSuites = testSuites.sort((a, b) => {
+		return a.label.localeCompare(b.label);
+	});
+
+	const rootSuite: TestSuiteInfo = {
+		type: 'suite',
+		id: 'root',
+		label: 'DM',
+		children: testSuites
+	};
+
+	return rootSuite;
 }
 
 export async function runAllTests(
@@ -139,12 +172,16 @@ export async function runAllTests(
 		})
 	})
 
-	let testLog: TestLog | undefined;
+	let testLog: TestLog|undefined;
 	try {
 		testLog = await runTest(cancelEmitter);
 	}
 	catch (err) {
 		if(err != 'Canceled'){
+			if(err instanceof Error){
+				let errobj: Error = err;
+				err = `${errobj.name}: ${errobj.message}\n${errobj.stack ?? ''}`;
+			}
 			// Mark tests as errored if we catch an error
 			allTests.forEach(test => {
 				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'errored', message: err });
@@ -162,21 +199,31 @@ export async function runAllTests(
 		testStatesEmitter.fire(<TestSuiteEvent>{ type: 'suite', suite: suite.id, state: 'completed' });
 	})
 
-	if (testLog == undefined) {
+	if (!testLog) {
 		return;
 	}
 
 	let passedTests = testLog.passed_tests;
 	let failedTests = testLog.failed_tests;
-	let skippedTests = allTests.filter(test => !passedTests.map(test => test.id).includes(test) && !failedTests.map(test => test.id).includes(test));
+	// Skipped tests are any tests where skip is explicitly called.
+	let skippedTests = testLog.skipped_tests;
+	// Ignored tests are any tests we expected to find in the results but didn't. These will be marked as skipped in the UI.
+	let ignoredTests = allTests.filter(test =>
+		!passedTests.map(test => test.id).includes(test) &&
+		!failedTests.map(test => test.id).includes(test) &&
+		!skippedTests.map(test => test.id).includes(test)
+	);
 
 	passedTests.forEach(test => {
 		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'passed' });
 	});
 	failedTests.forEach(test => {
-		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'failed', message: test.comment });
+		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'failed', message: test.message });
 	});
 	skippedTests.forEach(test => {
+		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'skipped', message: test.message });
+	});
+	ignoredTests.forEach(test => {
 		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
 	});
 }
@@ -256,10 +303,17 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 		// Disposing the daemon object will cause the waitForFinish method to throw an "Canceled" error, thus this lets us exit early.
 		daemon.dispose();
 	})
-	await daemon.waitForFinish();
+	try{
+		await daemon.waitForFinish();
+	}
+	catch(err){
+		daemon.dispose();
+		throw err;
+	}
 }
 
 async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
+	
 	let dmpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
 	if(dmpath == undefined){
 		throw Error("Dreammaker path not set");
@@ -269,7 +323,7 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
 	}
-
+	
 	let root = getRoot();
 	let projectName = await getProjectName();
 	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
@@ -280,6 +334,8 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	let root = getRoot();
 
 	await rmDir(`${root.fsPath}/data/logs/unit_test`);
+	await mkDir(`${root.fsPath}/data`);
+	await mkDir(`${root.fsPath}/data/logs`);
 	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
 
 	let ddpath: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreamdaemon');
@@ -290,47 +346,84 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 
 }
 
-interface PassedTest {
-	id: string
+interface TestResult {
+	id: string,
+	message?: string
 }
 
-interface FailedTest {
-	id: string
-	comment: string
+class TestLog {
+	readonly passed_tests: TestResult[] = [];
+	readonly failed_tests: TestResult[] = [];
+	readonly skipped_tests: TestResult[] = [];
 }
 
-interface TestLog {
-	passed_tests: PassedTest[]
-	failed_tests: FailedTest[]
+enum TestStatus {
+	Passed = 0,
+	Failed = 1,
+	Skipped = 2
 }
 
-async function readTestsLog(): Promise<TestLog> {
-	let root = getRoot();
-	let fdTestLog = await fsp.open(`${root.fsPath}/data/logs/unit_test/tests.log`, 'r');
-	let buf = await fdTestLog.readFile();
-	let text = buf.toString();
-	let lines = text.split('\n');
-	fdTestLog.close();
+type TestLogResult = {
+	status: TestStatus,
+	message: string,
+	name: string
+}
 
-	let passed_tests: PassedTest[] = [];
-	let failed_tests: FailedTest[] = [];
-	let match;
+async function readTestsJson(){
+	const root = getRoot();
+	const fdTestLog = await fsp.open(`${root.fsPath}/data/unit_tests.json`, 'r');
+	const buf = await fdTestLog.readFile();
+	const results: {[key: string]: TestLogResult} = JSON.parse(buf.toString());
 
-	// Find passed tests
-	let passRegexp = /PASS: \/datum\/unit_test\/([\w\/]+)/g;
-	while ((match = passRegexp.exec(text)) != null) {
-		passed_tests.push({ id: match[1] });
+	await fdTestLog.close();
+
+	const testlog = new TestLog();
+	for(const type in results){
+		const data = results[type];
+		const result = <TestResult>{
+			id: trimStart(type, '/datum/unit_test/'),
+			message: data.message
+		};
+		switch (data.status) {
+			case TestStatus.Passed:
+				testlog.passed_tests.push(result);
+				break;
+			case TestStatus.Failed:
+				testlog.failed_tests.push(result);
+				break;
+			case TestStatus.Skipped:
+				testlog.skipped_tests.push(result);
+				break;
+		}
 	}
 
+	return testlog;
+}
+
+async function readTestsLog() {
+	const root = getRoot();
+	const fdTestLog = await fsp.open(`${root.fsPath}/data/logs/unit_test/tests.log`, 'r');
+	const buf = await fdTestLog.readFile();
+	const text = buf.toString();
+	await fdTestLog.close();
+
+	const testlog = new TestLog();
+	let match;
+	// Find passed tests
+	const passRegexp = /PASS: \/datum\/unit_test\/([\w\/]+)/g;
+	while ((match = passRegexp.exec(text)) != null) {
+		testlog.passed_tests.push({ id: match[1] });
+	}
 	// Find failed tests
-	let failRegexp = /FAIL: \/datum\/unit_test\/([\w\/]+)/g;
+	const failRegexp = /FAIL: \/datum\/unit_test\/([\w\/]+)/g;
+	const lines = text.split('\n');
 	let linenum = 0;
 	while (linenum < lines.length) {
-		let match = failRegexp.exec(lines[linenum]);
+		const match = failRegexp.exec(lines[linenum]);
 		if (match != null) {
 			// Found a failed test. Begin iterating after the failed test line to consume the failed reason(s)
-			let id = match[1];
-			let commentlines = [];
+			const id = match[1];
+			const commentlines = [];
 			linenum++;
 			let line: string;
 			while ((line = lines[linenum]).substr(0, 1) != '[' && linenum < lines.length) {
@@ -340,19 +433,27 @@ async function readTestsLog(): Promise<TestLog> {
 				commentlines.push(line);
 				linenum++;
 			}
-			failed_tests.push({
+			testlog.failed_tests.push({
 				id: id,
-				comment: commentlines.join('\n')
+				message: commentlines.join('\n')
 			});
 		} else {
 			linenum++;
 		}
 	}
+	return testlog;
+}
 
-	return {
-		passed_tests: passed_tests,
-		failed_tests: failed_tests
-	};
+async function readTestsResults(){
+	const resultsType: string|undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.resultsType');
+	switch (resultsType ?? 'log') {
+		case 'log':
+			return await readTestsLog();
+		case 'json':
+			return await readTestsJson();
+		default:
+			throw new Error(`Unknown results type ${resultsType}`);
+	}
 }
 
 async function cleanupTest(){
@@ -371,7 +472,7 @@ async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
 
 	await runDMB(testDMBPath, cancelEmitter);
 
-	let testLog = await readTestsLog();
+	let testLog = await readTestsResults();
 
 	await cleanupTest();
 

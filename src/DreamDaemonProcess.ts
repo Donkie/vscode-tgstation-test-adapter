@@ -121,7 +121,7 @@ export class DreamDaemonProcess implements Disposable {
 					if (programs.length > 1) {
 						throw new Error("Multiple dream daemon processes with same unique id detected.");
 					}
-					psKill(programs[0].pid).catch(_ => { });
+					ps.kill(programs[0].pid);
 				})
 				.catch(err => {
 					console.error(err);
