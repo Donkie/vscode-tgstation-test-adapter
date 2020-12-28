@@ -86,8 +86,7 @@
           "description": "#defines to set for the project. These are injected to the beginning of the .dme file before compiling.",
           "scope": "resource",
           "default": [
-            "#define CIBUILDING",
-            "#define LOWMEMORYMODE"
+            "#define CIBUILDING"
           ]
         },
         "tgstationTestExplorer.project.unitTestsDirectory": {
@@ -106,7 +105,7 @@
           "type": "string",
           "description": "How test results are interpreted.",
           "scope": "resource",
-          "default": ["log"],
+          "default": "log",
           "enum": ["log", "json"],
           "enumDescriptions": ["Parsing unit test log files", "Parsing the new standardized unit_test.json file"]
         }

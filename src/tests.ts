@@ -459,10 +459,10 @@ async function readTestsResults(){
 async function cleanupTest(){
 	let root = getRoot();
 	let projectName = await getProjectName();
-	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dmb`);
-	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dme`);
-	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`);
-	await fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`);
+	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dmb`).catch(console.warn);
+	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dme`).catch(console.warn);
+	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
+	fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`).catch(console.warn);
 }
 
 async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
