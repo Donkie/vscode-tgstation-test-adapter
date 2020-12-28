@@ -2,39 +2,11 @@ import * as vscode from 'vscode';
 import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent } from 'vscode-test-adapter-api';
 import * as child from 'child_process';
 import { promises as fsp } from 'fs';
-import * as path from 'path';
 import { EventEmitter } from 'vscode';
 import { DreamDaemonProcess } from './DreamDaemonProcess';
+import { exists, mkDir, rmDir } from './utils';
+import * as config from './config';
 
-async function exists(fileordir: string) {
-	try {
-		await fsp.access(fileordir);
-		return true;
-	} catch (err) {
-		return false;
-	}
-}
-
-async function mkDir(directory: string) {
-	let direxists = await exists(directory);
-	if (!direxists) {
-		await fsp.mkdir(directory);
-	}
-}
-
-async function rmDir(directory: string) {
-	let dirExists = await exists(directory);
-	if (!dirExists) {
-		return;
-	}
-	let files = await fsp.readdir(directory);
-	await Promise.all(
-		files.map(file => fsp.unlink(path.join(directory, file)))
-	);
-	try {
-		await fsp.unlink(directory);
-	} catch { }
-}
 
 export function getRoot(): vscode.Uri {
 	let wsFolders = vscode.workspace.workspaceFolders;
@@ -116,23 +88,10 @@ async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	return suite;
 }
 
-function getUnitTestsGlob() {
-	let glob: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDirectory');
-	return glob ?? 'code/modules/unit_tests/*.dm';
-}
-
-function getUnitTestsDef() {
-	let def: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.unitTestsDefinitionRegex');
-	if (!def) {
-		return /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
-	}
-	return new RegExp(def, 'gm');
-}
-
 export async function loadTests() {
-	const unitTestsDef = getUnitTestsDef();
+	const unitTestsDef = config.getUnitTestsDef();
 
-	const uris = await vscode.workspace.findFiles(getUnitTestsGlob());
+	const uris = await vscode.workspace.findFiles(config.getUnitTestsGlob());
 	let testSuites = await Promise.all(uris.map(uri => locateTestsInFile(uri, unitTestsDef)));
 
 	// Filter out suites without any tests
@@ -230,27 +189,13 @@ export async function runAllTests(
 }
 
 async function getProjectName() {
-	let dmefilename: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.DMEName');
-	if (dmefilename == undefined) {
-		throw Error(".dme name not set");
-	}
-
-	let root = getRoot();
-	let dmeexists = await exists(`${root.fsPath}/${dmefilename}`);
-	if (!dmeexists) {
-		throw Error(`${dmefilename} does not exist in the current workspace. You can change this in the Tgstation Test Explorer workspace settings.`);
-	}
-
-	let projectname = dmefilename.substring(0, dmefilename.length - 4);
+	const dmefilename = await config.getDMEName();
+	const projectname = removeExtension(dmefilename);
 	return projectname;
 }
 
 async function writeDefines(fd: fsp.FileHandle) {
-	let defines: string[] | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.defines');
-	if (defines == undefined) {
-		return;
-	}
-
+	const defines = config.getDefines();
 	for (const define of defines) {
 		await fd.write(`${define}\n`);
 	}
@@ -314,12 +259,7 @@ async function runDaemonProcess(command: string, args: string[], cancelEmitter: 
 }
 
 async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
-
-	let dmpath: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreammaker');
-	if (dmpath == undefined) {
-		throw Error("Dreammaker path not set");
-	}
-
+	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new Error(`Compilation failed:\n${stdout}`);
@@ -343,12 +283,8 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	await mkDir(`${root.fsPath}/data/logs`);
 	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
 
-	let ddpath: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('apps.dreamdaemon');
-	if (ddpath == undefined) {
-		throw Error("Dreamdaemon path not set");
-	}
+	const ddpath = await config.getDreamdaemonExecutable();
 	await runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
-
 }
 
 interface TestResult {
@@ -450,14 +386,11 @@ async function readTestsLog() {
 }
 
 async function readTestsResults() {
-	const resultsType: string | undefined = vscode.workspace.getConfiguration('tgstationTestExplorer').get('project.resultsType');
-	switch (resultsType ?? 'log') {
-		case 'log':
+	switch (config.getResultsType()) {
+		case config.ResultType.Log:
 			return await readTestsLog();
-		case 'json':
+		case config.ResultType.Json:
 			return await readTestsJson();
-		default:
-			throw new Error(`Unknown results type ${resultsType}`);
 	}
 }
 
