@@ -4,34 +4,20 @@ import * as child from 'child_process';
 import { promises as fsp } from 'fs';
 import { EventEmitter } from 'vscode';
 import { DreamDaemonProcess } from './DreamDaemonProcess';
-import { exists, mkDir, rmDir } from './utils';
+import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile } from './utils';
 import * as config from './config';
+import {UserError, ConfigError, CancelError, RunError} from './error';
 
+const showInfo = vscode.window.showInformationMessage;
+const showWarning = vscode.window.showWarningMessage;
+const showError = vscode.window.showErrorMessage;
 
 export function getRoot(): vscode.Uri {
 	let wsFolders = vscode.workspace.workspaceFolders;
 	if (wsFolders == null) {
-		throw Error("No workspace open");
+		throw new UserError("No workspace open");
 	}
 	return wsFolders[0].uri;
-}
-
-function removeExtension(file: string) {
-	let parts = file.split('.');
-	parts.pop();
-	return parts.join('.');
-}
-
-function getFileFromPath(filePath: string) {
-	let parts = filePath.split('/');
-	return parts[parts.length - 1];
-}
-
-function trimStart(subject: string, text: string) {
-	if (subject.startsWith(text)) {
-		return subject.substring(text.length);
-	}
-	return subject;
 }
 
 interface FoundLine {
@@ -44,7 +30,7 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	const text = doc.getText();
 	const lines = text.split('\n');
 
-	let foundLines: FoundLine[] = [];
+	const foundLines: FoundLine[] = [];
 
 	let lineNumber = 0;
 	lines.forEach(line => {
@@ -136,20 +122,27 @@ export async function runAllTests(
 		testLog = await runTest(cancelEmitter);
 	}
 	catch (err) {
-		if (err != 'Canceled') {
+		if (err instanceof CancelError) {
+			allTests.forEach(test => {
+				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
+			});
+		} else {
 			if (err instanceof Error) {
+				if (err instanceof RunError) {
+					showError("Test Explorer: Test run failed, click one of the test items in the Test Explorer to see more.");
+				} else if (err instanceof UserError || err instanceof ConfigError) {
+					showError(`Test Explorer: ${err.message}`);
+				}
+
 				let errobj: Error = err;
 				// The stack contain the name and message already, so if it exists we don't need to print them.
 				err = errobj.stack ?? `${errobj.name}: ${errobj.message}`;
 			}
+
 			// Mark tests as errored if we catch an error
 			allTests.forEach(test => {
 				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'errored', message: err });
 			})
-		} else {
-			allTests.forEach(test => {
-				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
-			});
 		}
 	}
 
@@ -228,7 +221,7 @@ async function runProcess(command: string, args: string[], cancelEmitter: EventE
 		let process = child.spawn(command, args);
 		let cancelListener = cancelEmitter.event(_ => {
 			process.kill();
-			reject(new Error("Canceled"));
+			reject(new CancelError());
 		});
 		process.stdout.on('data', (data: Buffer) => {
 			stdout += data;
@@ -246,7 +239,7 @@ async function runProcess(command: string, args: string[], cancelEmitter: EventE
 async function runDaemonProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
 	let daemon = new DreamDaemonProcess(command, args);
 	cancelEmitter.event(_ => {
-		// Disposing the daemon object will cause the waitForFinish method to throw an "Canceled" error, thus this lets us exit early.
+		// Disposing the daemon object will cause the waitForFinish method to throw a CancelError, thus this lets us exit early.
 		daemon.dispose();
 	})
 	try {
@@ -262,7 +255,7 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
-		throw new Error(`Compilation failed:\n${stdout}`);
+		throw new RunError(`Compilation failed:\n${stdout}`);
 	}
 
 	let root = getRoot();
@@ -275,7 +268,7 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	let root = getRoot();
 
 	if (!await exists(path)) {
-		throw Error(`Can't start dreamdaemon, ${path} does not exist!`);
+		throw new RunError(`Can't start dreamdaemon, "${path}" does not exist!`);
 	}
 
 	await rmDir(`${root.fsPath}/data/logs/unit_test`);
@@ -312,7 +305,11 @@ type TestLogResult = {
 
 async function readTestsJson() {
 	const root = getRoot();
-	const fdTestLog = await fsp.open(`${root.fsPath}/data/unit_tests.json`, 'r');
+	const testsFilepath = `${root.fsPath}/data/unit_tests.json`;
+	if(!await exists(testsFilepath)){
+		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
+	}
+	const fdTestLog = await fsp.open(testsFilepath, 'r');
 	const buf = await fdTestLog.readFile();
 	const results: { [key: string]: TestLogResult } = JSON.parse(buf.toString());
 
@@ -343,7 +340,11 @@ async function readTestsJson() {
 
 async function readTestsLog() {
 	const root = getRoot();
-	const fdTestLog = await fsp.open(`${root.fsPath}/data/logs/unit_test/tests.log`, 'r');
+	const testsFilepath = `${root.fsPath}/data/logs/unit_test/tests.log`;
+	if(!await exists(testsFilepath)){
+		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
+	}
+	const fdTestLog = await fsp.open(testsFilepath, 'r');
 	const buf = await fdTestLog.readFile();
 	const text = buf.toString();
 	await fdTestLog.close();
@@ -397,10 +398,10 @@ async function readTestsResults() {
 async function cleanupTest() {
 	let root = getRoot();
 	let projectName = await getProjectName();
-	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dmb`).catch(console.warn);
-	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dme`).catch(console.warn);
-	fsp.unlink(`${root.fsPath}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
-	fsp.unlink(`${root.fsPath}/${projectName}.mdme.rsc`).catch(console.warn);
+	rmFile(`${root.fsPath}/${projectName}.mdme.dmb`).catch(console.warn);
+	rmFile(`${root.fsPath}/${projectName}.mdme.dme`).catch(console.warn);
+	rmFile(`${root.fsPath}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
+	rmFile(`${root.fsPath}/${projectName}.mdme.rsc`).catch(console.warn);
 }
 
 async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {

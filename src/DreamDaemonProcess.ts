@@ -3,77 +3,24 @@ import { EventEmitter, Disposable } from 'vscode';
 import { getRoot } from './tests';
 import * as util from 'util';
 import * as ps from 'ps-node';
-import * as fs from 'fs';
-import { promises as fsp } from 'fs';
+import { readFileContents, watchUntil } from './utils';
 
 const psLookup = util.promisify(ps.lookup);
-const psKill = util.promisify(ps.kill);
 
 function getRandomId() {
 	return Math.floor(Math.random() * 1e10);
 }
 
 async function waitForFileInDirChange(dir: string, filename: string, cancelEmitter: EventEmitter<void>) {
-	return new Promise<void>((resolve, reject) => {
-		let dirwatcher = fs.watch(dir);
-		let cancelEmitterHandle = cancelEmitter.event(_ => {
-			dirwatcher.close();
-			reject(new Error("Canceled"));
-		});
-		dirwatcher.on('error', err => {
-			cancelEmitterHandle.dispose();
-			reject(err);
-		})
-		dirwatcher.on('change', (_, fname) => {
-			if (fname === filename) {
-				dirwatcher.close();
-				cancelEmitterHandle.dispose();
-				resolve();
-			}
-		});
+	await watchUntil(dir, cancelEmitter, async (_, fname) => {
+		return fname === filename;
 	});
 }
 
-async function readFileContents(filepath: string) {
-	let handle = await fsp.open(filepath, 'r');
-	let contents: string;
-	try {
-		let buf = await handle.readFile();
-		contents = buf.toString();
-	} catch (err) {
-		handle.close();
-		throw err;
-	}
-	handle.close();
-	return contents;
-}
-
 async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<void>, checkdone: (contents: string) => boolean) {
-	return new Promise<void>((resolve, reject) => {
-		let filewatcher = fs.watch(filepath);
-		let cancelEmitterHandle = cancelEmitter.event(_ => {
-			filewatcher.close();
-			reject(new Error("Canceled"));
-		});
-		filewatcher.on('error', err => {
-			cancelEmitterHandle.dispose();
-			reject(err);
-		})
-		filewatcher.on('change', (_, __) => {
-			readFileContents(filepath)
-				.then(contents => {
-					if (checkdone(contents)) {
-						cancelEmitterHandle.dispose();
-						filewatcher.close();
-						resolve();
-					}
-				})
-				.catch(err => {
-					cancelEmitterHandle.dispose();
-					filewatcher.close();
-					reject(err);
-				})
-		})
+	await watchUntil(filepath, cancelEmitter, async (_, __) => {
+		const contents = await readFileContents(filepath);
+		return checkdone(contents);
 	});
 }
 
