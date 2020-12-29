@@ -1,6 +1,5 @@
 import { promises as fsp } from 'fs';
 import * as path from 'path';
-import * as fs from 'fs';
 import * as child from 'child_process';
 import { EventEmitter } from 'vscode';
 import { CancelError } from './error';
@@ -53,55 +52,6 @@ export async function rmFile(file: string) {
 	if (await exists(file)) {
 		await fsp.unlink(file);
 	}
-}
-
-/**
- * Reads a files contents into a string.
- * @param filepath Path
- */
-export async function readFileContents(filepath: string) {
-	let handle = await fsp.open(filepath, 'r');
-	let contents: string;
-	try {
-		let buf = await handle.readFile();
-		contents = buf.toString();
-	} catch (err) {
-		handle.close();
-		throw err;
-	}
-	handle.close();
-	return contents;
-}
-
-/**
- * Watches a file or directory for changes. Calls the "donecb" on every change. Returning true in that cb will cause the promise to resolve.
- * @param fileordir Path
- * @param cancelEmitter Emitter which lets you cancel the watch. Throws a CancelError if so.
- * @param donecb Callback where you indicate if you're done watching.
- */
-export async function watchUntil(fileordir: string, cancelEmitter: EventEmitter<void>, donecb: (eventType: string, filename: string|Buffer) => Promise<boolean>){
-	return new Promise<void>((resolve, reject) => {
-		let watcher = fs.watch(fileordir);
-		let cancelEmitterHandle = cancelEmitter.event(_ => {
-			watcher.close();
-			reject(new CancelError());
-		});
-		watcher.on('error', err => {
-			cancelEmitterHandle.dispose();
-			reject(err);
-		})
-		watcher.on('change', (eventType, fileName) => {
-			donecb(eventType, fileName)
-				.then(isDone => {
-					if (isDone) {
-						watcher.close();
-						cancelEmitterHandle.dispose();
-						resolve();
-					}
-				})
-				.catch(reject);
-		});
-	});
 }
 
 /**
