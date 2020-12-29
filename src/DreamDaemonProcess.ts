@@ -27,7 +27,7 @@ async function waitForFileChange(filepath: string, cancelEmitter: EventEmitter<v
 /**
  * Represents a DreamDaemon process. The daemon is started immediately in the constructor, and can be cancelled by disposing the object.
  */
-export class DreamDaemonProcess implements Disposable {
+class DreamDaemonProcess implements Disposable {
 	private isRunning = false;
 	private isDisposed = false;
 	private uniqueId: number | undefined;
@@ -82,5 +82,26 @@ export class DreamDaemonProcess implements Disposable {
 		}
 
 		this.cancelEmitter.dispose();
+	}
+}
+
+/**
+ * Starts a cancelable dream daemon process.
+ * @param command The command to start with.
+ * @param args The arguments to start with.
+ * @param cancelEmitter An emitter which lets you prematurely cancel and stop the process.
+ */
+export async function runDreamDaemonProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
+	let daemon = new DreamDaemonProcess(command, args);
+	cancelEmitter.event(_ => {
+		// Disposing the daemon object will cause the waitForFinish method to throw a CancelError, thus this lets us exit early.
+		daemon.dispose();
+	})
+	try {
+		await daemon.waitForFinish();
+	}
+	catch (err) {
+		daemon.dispose();
+		throw err;
 	}
 }

@@ -1,17 +1,17 @@
 import * as vscode from 'vscode';
 import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent } from 'vscode-test-adapter-api';
-import * as child from 'child_process';
 import { promises as fsp } from 'fs';
 import { EventEmitter } from 'vscode';
-import { DreamDaemonProcess } from './DreamDaemonProcess';
-import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile } from './utils';
+import { runDreamDaemonProcess } from './DreamDaemonProcess';
+import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess } from './utils';
 import * as config from './config';
 import {UserError, ConfigError, CancelError, RunError} from './error';
 
-const showInfo = vscode.window.showInformationMessage;
-const showWarning = vscode.window.showWarningMessage;
 const showError = vscode.window.showErrorMessage;
 
+/**
+ * Gets the root path to the first workspace folder opened.
+ */
 export function getRoot(): vscode.Uri {
 	let wsFolders = vscode.workspace.workspaceFolders;
 	if (wsFolders == null) {
@@ -20,11 +20,19 @@ export function getRoot(): vscode.Uri {
 	return wsFolders[0].uri;
 }
 
+/**
+ * Represents a found line, returned by locateLineInFile.
+ */
 interface FoundLine {
 	match: RegExpExecArray,
 	lineNumber: number
 }
 
+/**
+ * Scans the file and tries to match each line with the supplied regex. Lines that match will be returned.
+ * @param filePath The file to scan.
+ * @param lineRegexp The regex to match each line with.
+ */
 async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	const doc = await vscode.workspace.openTextDocument(filePath);
 	const text = doc.getText();
@@ -44,6 +52,11 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	return foundLines;
 }
 
+/**
+ * Locates any test definitions in a file.
+ * @param filePath The file to scan.
+ * @param lineRegexp The regex used to match test definitions. Must contain one capture group which represents the test id.
+ */
 async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	const tests: TestInfo[] = [];
 
@@ -74,6 +87,9 @@ async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 	return suite;
 }
 
+/**
+ * Scans the workspace for any unit test definitions.
+ */
 export async function loadTests() {
 	const unitTestsDef = config.getUnitTestsDef();
 
@@ -100,6 +116,12 @@ export async function loadTests() {
 	return rootSuite;
 }
 
+/**
+ * Runs the unit test.
+ * @param tests Test suites to run.
+ * @param testStatesEmitter Emitter used to indicate the progress and results of the test .
+ * @param cancelEmitter Emitter used to prematurely cancel the test run.
+ */
 export async function runAllTests(
 	tests: (TestSuiteInfo | TestInfo)[],
 	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
@@ -181,12 +203,19 @@ export async function runAllTests(
 	});
 }
 
+/**
+ * Gets the "project name" of the workspace folder, this is the "tgstation" part of "tgstation.dme".
+ */
 async function getProjectName() {
 	const dmefilename = await config.getDMEName();
 	const projectname = removeExtension(dmefilename);
 	return projectname;
 }
 
+/**
+ * Writes the defines specified in config to the file.
+ * @param fd The file to write to.
+ */
 async function writeDefines(fd: fsp.FileHandle) {
 	const defines = config.getDefines();
 	for (const define of defines) {
@@ -194,6 +223,9 @@ async function writeDefines(fd: fsp.FileHandle) {
 	}
 }
 
+/**
+ * Copies the project .dme, applies the defines in the beginning and returns the path to this new .dme.
+ */
 async function makeTestDME() {
 	let root = getRoot();
 	let projectName = await getProjectName();
@@ -215,42 +247,11 @@ async function makeTestDME() {
 	return testDMEPath;
 }
 
-async function runProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
-	return new Promise<string>((resolve, reject) => {
-		let stdout = '';
-		let process = child.spawn(command, args);
-		let cancelListener = cancelEmitter.event(_ => {
-			process.kill();
-			reject(new CancelError());
-		});
-		process.stdout.on('data', (data: Buffer) => {
-			stdout += data;
-		})
-		process.stderr.on('data', (data: Buffer) => {
-			stdout += data;
-		})
-		process.once('exit', _ => {
-			cancelListener.dispose();
-			resolve(stdout);
-		})
-	});
-}
-
-async function runDaemonProcess(command: string, args: string[], cancelEmitter: EventEmitter<void>) {
-	let daemon = new DreamDaemonProcess(command, args);
-	cancelEmitter.event(_ => {
-		// Disposing the daemon object will cause the waitForFinish method to throw a CancelError, thus this lets us exit early.
-		daemon.dispose();
-	})
-	try {
-		await daemon.waitForFinish();
-	}
-	catch (err) {
-		daemon.dispose();
-		throw err;
-	}
-}
-
+/**
+ * Compiles a .dme using dreammaker. Returns the path to the compiled .dmb file.
+ * @param path The path to the .dme to compile.
+ * @param cancelEmitter An emitter which lets you prematurely cancel and stop the compilation.
+ */
 async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
@@ -264,6 +265,11 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
 	return testDMBPath;
 }
 
+/**
+ * Runs the dreamdaemon with the specified .dmb file.
+ * @param path The .dmb file to run.
+ * @param cancelEmitter An emitter which lets you prematurely cancel and stop the run.
+ */
 async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	let root = getRoot();
 
@@ -277,32 +283,47 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
 
 	const ddpath = await config.getDreamdaemonExecutable();
-	await runDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
+	await runDreamDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
 }
 
+/**
+ * Represents an internal test result.
+ */
 interface TestResult {
 	id: string,
 	message?: string
 }
 
+/**
+ * Represents a set of test results.
+ */
 class TestLog {
 	readonly passed_tests: TestResult[] = [];
 	readonly failed_tests: TestResult[] = [];
 	readonly skipped_tests: TestResult[] = [];
 }
 
+/**
+ * Represents the state of a test result.
+ */
 enum TestStatus {
 	Passed = 0,
 	Failed = 1,
 	Skipped = 2
 }
 
+/**
+ * Represents the objects found in the unit tests json file.
+ */
 type TestLogResult = {
 	status: TestStatus,
 	message: string,
 	name: string
 }
 
+/**
+ * Read test results from a json file.
+ */
 async function readTestsJson() {
 	const root = getRoot();
 	const testsFilepath = `${root.fsPath}/data/unit_tests.json`;
@@ -338,6 +359,9 @@ async function readTestsJson() {
 	return testlog;
 }
 
+/**
+ * Read test results from a log file.
+ */
 async function readTestsLog() {
 	const root = getRoot();
 	const testsFilepath = `${root.fsPath}/data/logs/unit_test/tests.log`;
@@ -386,6 +410,9 @@ async function readTestsLog() {
 	return testlog;
 }
 
+/**
+ * Read test results based on ResultsType config setting.
+ */
 async function readTestsResults() {
 	switch (config.getResultsType()) {
 		case config.ResultType.Log:
@@ -395,6 +422,9 @@ async function readTestsResults() {
 	}
 }
 
+/**
+ * Cleans up any remaining files and folders after a test run
+ */
 async function cleanupTest() {
 	let root = getRoot();
 	let projectName = await getProjectName();
@@ -404,6 +434,10 @@ async function cleanupTest() {
 	rmFile(`${root.fsPath}/${projectName}.mdme.rsc`).catch(console.warn);
 }
 
+/**
+ * Performs a test run
+ * @param cancelEmitter An emitter which lets you prematurely cancel and stop the test run.
+ */
 async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
 	let testDMEPath = await makeTestDME();
 
