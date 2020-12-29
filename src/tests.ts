@@ -150,13 +150,17 @@ export async function runAllTests(
 			});
 		} else {
 			if (err instanceof Error) {
+				let errobj: Error = err;
 				if (err instanceof RunError) {
 					showError("Test Explorer: Test run failed, click one of the test items in the Test Explorer to see more.");
-				} else if (err instanceof UserError || err instanceof ConfigError) {
+				} else if (err instanceof ConfigError) {
+					showError(`Test Explorer: ${err.message}\nPlease confirm that the workspace and/or user configuration is correct.`);
+				} else if (err instanceof UserError) {
 					showError(`Test Explorer: ${err.message}`);
+				} else {
+					showError(`Test Explorer: An unexpected error has occured, click one of the test items in the Test Explorer to see more. Please report this on the issue tracker!\n${errobj.name}: ${errobj.message}`);
 				}
 
-				let errobj: Error = err;
 				// The stack contain the name and message already, so if it exists we don't need to print them.
 				err = errobj.stack ?? `${errobj.name}: ${errobj.message}`;
 			}
