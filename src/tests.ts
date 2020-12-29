@@ -281,13 +281,25 @@ async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
 		throw new RunError(`Can't start dreamdaemon, "${path}" does not exist!`);
 	}
 
-	await rmDir(`${root.fsPath}/data/logs/unit_test`);
 	await mkDir(`${root.fsPath}/data`);
 	await mkDir(`${root.fsPath}/data/logs`);
-	await mkDir(`${root.fsPath}/data/logs/unit_test`); // Make empty dir so we have something to watch until the server starts populating it
+	const resultsType = config.getResultsType();
+	switch (resultsType) {
+		case config.ResultType.Log:
+			await rmDir(`${root.fsPath}/data/logs/unit_test`);
+			await mkDir(`${root.fsPath}/data/logs/unit_test`);
+			break;
+		case config.ResultType.Json:
+			await rmFile(`${root.fsPath}/data/unit_tests.json`);
+			break;
+	}
 
 	const ddpath = await config.getDreamdaemonExecutable();
-	await runDreamDaemonProcess(ddpath, [path, '-close', '-trusted', '-verbose', '-params', '"log-directory=unit_test"'], cancelEmitter);
+	const args = [path, '-close', '-trusted', '-verbose'];
+	if(resultsType === config.ResultType.Log){
+		args.push('-params', '"log-directory=unit_test"');
+	}
+	await runDreamDaemonProcess(ddpath, args, cancelEmitter);
 }
 
 /**
