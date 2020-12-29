@@ -68,7 +68,7 @@ export class DMAdapter implements TestAdapter {
 		let allTestSuites = this.loadedTests.children.map(suite => suite.id);
 		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests: allTestSuites });
 
-		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter);
+		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter, this.workspace);
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
 

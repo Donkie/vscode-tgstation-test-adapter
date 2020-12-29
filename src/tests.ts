@@ -10,17 +10,6 @@ import {UserError, ConfigError, CancelError, RunError} from './error';
 const showError = vscode.window.showErrorMessage;
 
 /**
- * Gets the root path to the first workspace folder opened.
- */
-export function getRoot(): vscode.Uri {
-	let wsFolders = vscode.workspace.workspaceFolders;
-	if (wsFolders == null) {
-		throw new UserError("No workspace open");
-	}
-	return wsFolders[0].uri;
-}
-
-/**
  * Represents a found line, returned by locateLineInFile.
  */
 interface FoundLine {
@@ -92,7 +81,7 @@ async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
  */
 export async function loadTests() {
 	const unitTestsDef = config.getUnitTestsDef();
-
+	
 	const uris = await vscode.workspace.findFiles(config.getUnitTestsGlob());
 	let testSuites = await Promise.all(uris.map(uri => locateTestsInFile(uri, unitTestsDef)));
 
@@ -125,7 +114,8 @@ export async function loadTests() {
 export async function runAllTests(
 	tests: (TestSuiteInfo | TestInfo)[],
 	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
-	cancelEmitter: EventEmitter<void>
+	cancelEmitter: EventEmitter<void>,
+	workspace: vscode.WorkspaceFolder
 ): Promise<void> {
 
 	let allTests: string[] = [];
@@ -141,7 +131,7 @@ export async function runAllTests(
 
 	let testLog: TestLog | undefined;
 	try {
-		testLog = await runTest(cancelEmitter);
+		testLog = await runTest(cancelEmitter, workspace);
 	}
 	catch (err) {
 		if (err instanceof CancelError) {
@@ -230,13 +220,12 @@ async function writeDefines(fd: fsp.FileHandle) {
 /**
  * Copies the project .dme, applies the defines in the beginning and returns the path to this new .dme.
  */
-async function makeTestDME() {
-	let root = getRoot();
+async function makeTestDME(workspace: vscode.WorkspaceFolder) {
 	let projectName = await getProjectName();
-	let testDMEPath = `${root.fsPath}/${projectName}.mdme.dme`;
+	let testDMEPath = `${workspace.uri.fsPath}/${projectName}.mdme.dme`;
 
 	let fdNew = await fsp.open(testDMEPath, 'w');
-	let fdOrig = await fsp.open(`${root.fsPath}/${projectName}.dme`, 'r');
+	let fdOrig = await fsp.open(`${workspace.uri.fsPath}/${projectName}.dme`, 'r');
 
 	await writeDefines(fdNew);
 
@@ -256,16 +245,15 @@ async function makeTestDME() {
  * @param path The path to the .dme to compile.
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the compilation.
  */
-async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
+async function compileDME(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>) {
 	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
 	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new RunError(`Compilation failed:\n${stdout}`);
 	}
 
-	let root = getRoot();
 	let projectName = await getProjectName();
-	let testDMBPath = `${root.fsPath}/${projectName}.mdme.dmb`;
+	let testDMBPath = `${workspace.uri.fsPath}/${projectName}.mdme.dmb`;
 	return testDMBPath;
 }
 
@@ -274,23 +262,22 @@ async function compileDME(path: string, cancelEmitter: EventEmitter<void>) {
  * @param path The .dmb file to run.
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the run.
  */
-async function runDMB(path: string, cancelEmitter: EventEmitter<void>) {
-	let root = getRoot();
-
+async function runDMB(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>) {
 	if (!await exists(path)) {
 		throw new RunError(`Can't start dreamdaemon, "${path}" does not exist!`);
 	}
 
-	await mkDir(`${root.fsPath}/data`);
-	await mkDir(`${root.fsPath}/data/logs`);
+	const root = workspace.uri.fsPath;
+	await mkDir(`${root}/data`);
+	await mkDir(`${root}/data/logs`);
 	const resultsType = config.getResultsType();
 	switch (resultsType) {
 		case config.ResultType.Log:
-			await rmDir(`${root.fsPath}/data/logs/unit_test`);
-			await mkDir(`${root.fsPath}/data/logs/unit_test`);
+			await rmDir(`${root}/data/logs/unit_test`);
+			await mkDir(`${root}/data/logs/unit_test`);
 			break;
 		case config.ResultType.Json:
-			await rmFile(`${root.fsPath}/data/unit_tests.json`);
+			await rmFile(`${root}/data/unit_tests.json`);
 			break;
 	}
 
@@ -340,9 +327,8 @@ type TestLogResult = {
 /**
  * Read test results from a json file.
  */
-async function readTestsJson() {
-	const root = getRoot();
-	const testsFilepath = `${root.fsPath}/data/unit_tests.json`;
+async function readTestsJson(workspace: vscode.WorkspaceFolder) {
+	const testsFilepath = `${workspace.uri.fsPath}/data/unit_tests.json`;
 	if(!await exists(testsFilepath)){
 		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
 	}
@@ -378,9 +364,8 @@ async function readTestsJson() {
 /**
  * Read test results from a log file.
  */
-async function readTestsLog() {
-	const root = getRoot();
-	const testsFilepath = `${root.fsPath}/data/logs/unit_test/tests.log`;
+async function readTestsLog(workspace: vscode.WorkspaceFolder) {
+	const testsFilepath = `${workspace.uri.fsPath}/data/logs/unit_test/tests.log`;
 	if(!await exists(testsFilepath)){
 		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
 	}
@@ -429,41 +414,41 @@ async function readTestsLog() {
 /**
  * Read test results based on ResultsType config setting.
  */
-async function readTestsResults() {
+async function readTestsResults(workspace: vscode.WorkspaceFolder) {
 	switch (config.getResultsType()) {
 		case config.ResultType.Log:
-			return await readTestsLog();
+			return await readTestsLog(workspace);
 		case config.ResultType.Json:
-			return await readTestsJson();
+			return await readTestsJson(workspace);
 	}
 }
 
 /**
  * Cleans up any remaining files and folders after a test run
  */
-async function cleanupTest() {
-	let root = getRoot();
+async function cleanupTest(workspace: vscode.WorkspaceFolder) {
+	const root = workspace.uri.fsPath;
 	let projectName = await getProjectName();
-	rmFile(`${root.fsPath}/${projectName}.mdme.dmb`).catch(console.warn);
-	rmFile(`${root.fsPath}/${projectName}.mdme.dme`).catch(console.warn);
-	rmFile(`${root.fsPath}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
-	rmFile(`${root.fsPath}/${projectName}.mdme.rsc`).catch(console.warn);
+	rmFile(`${root}/${projectName}.mdme.dmb`).catch(console.warn);
+	rmFile(`${root}/${projectName}.mdme.dme`).catch(console.warn);
+	rmFile(`${root}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
+	rmFile(`${root}/${projectName}.mdme.rsc`).catch(console.warn);
 }
 
 /**
  * Performs a test run
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the test run.
  */
-async function runTest(cancelEmitter: EventEmitter<void>): Promise<TestLog> {
-	let testDMEPath = await makeTestDME();
+async function runTest(cancelEmitter: EventEmitter<void>, workspace: vscode.WorkspaceFolder): Promise<TestLog> {
+	let testDMEPath = await makeTestDME(workspace);
 
-	let testDMBPath = await compileDME(testDMEPath, cancelEmitter);
+	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter);
 
-	await runDMB(testDMBPath, cancelEmitter);
+	await runDMB(testDMBPath, workspace, cancelEmitter);
 
-	let testLog = await readTestsResults();
+	let testLog = await readTestsResults(workspace);
 
-	await cleanupTest();
+	await cleanupTest(workspace);
 
 	return testLog;
 }
