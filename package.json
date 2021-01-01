@@ -61,6 +61,18 @@
       "type": "object",
       "title": "Tgstation Test Explorer",
       "properties": {
+        "tgstationTestExplorer.logpanel": {
+          "description": "Write diagnostic logs to an output panel",
+          "type": "boolean",
+          "scope": "resource",
+          "default": false
+        },
+        "tgstationTestExplorer.logfile": {
+          "description": "Write diagnostic logs to the given file",
+          "type": "string",
+          "scope": "resource",
+          "default": ""
+        },
         "tgstationTestExplorer.apps.dreammaker": {
           "type": "string",
           "description": "Path to dm.exe",
@@ -106,8 +118,14 @@
           "description": "How test results are interpreted.",
           "scope": "resource",
           "default": "log",
-          "enum": ["log", "json"],
-          "enumDescriptions": ["Parsing unit test log files", "Parsing the new standardized unit_test.json file"]
+          "enum": [
+            "log",
+            "json"
+          ],
+          "enumDescriptions": [
+            "Parsing unit test log files",
+            "Parsing the new standardized unit_test.json file"
+          ]
         }
       }
     }

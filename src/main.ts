@@ -4,23 +4,20 @@ import { Log, TestAdapterRegistrar } from 'vscode-test-adapter-util';
 import { DMAdapter } from './adapter';
 
 export async function activate(context: vscode.ExtensionContext) {
-
-	const workspaceFolder = (vscode.workspace.workspaceFolders || [])[0];
-
-	// create a simple logger that can be configured with the configuration variables
-	// `exampleExplorer.logpanel` and `exampleExplorer.logfile`
-	const log = new Log('exampleExplorer', workspaceFolder, 'Example Explorer Log');
+	const log = new Log('tgstationTestExplorer', undefined, 'Tgstation Test Explorer Log');
 	context.subscriptions.push(log);
 
-	// get the Test Explorer extension
 	const testExplorerExtension = vscode.extensions.getExtension<TestHub>(testExplorerExtensionId);
-	if (log.enabled) log.info(`Test Explorer ${testExplorerExtension ? '' : 'not '}found`);
+	if (testExplorerExtension) {
+		log.info(`Activation: Test Explorer found`);
+	} else {
+		log.error(`Activation: Test Explorer not found`);
+	}
 
 	if (testExplorerExtension) {
-
 		const testHub = testExplorerExtension.exports;
 
-		// this will register an ExampleTestAdapter for each WorkspaceFolder
+		// Register an adapter for each workspace folder
 		context.subscriptions.push(new TestAdapterRegistrar(
 			testHub,
 			workspaceFolder => new DMAdapter(workspaceFolder, log),

@@ -111,3 +111,10 @@ export function trimStart(subject: string, text: string) {
 	}
 	return subject;
 }
+
+export function durationToString(dateStart: number) {
+	const testDur = Math.round((Date.now() - dateStart) / 1000);
+	const minutes = Math.floor(testDur/60);
+	const seconds = (testDur%60).toString().padStart(2, '0');
+	return `${minutes}:${seconds}`;
+}

@@ -3,6 +3,7 @@ import { TestAdapter, TestLoadStartedEvent, TestLoadFinishedEvent, TestRunStarte
 import { Log } from 'vscode-test-adapter-util';
 import { loadTests, runAllTests } from './tests';
 import * as util from 'util';
+import { durationToString } from './utils';
 
 export class DMAdapter implements TestAdapter {
 	private disposables: { dispose(): void }[] = [];
@@ -26,7 +27,7 @@ export class DMAdapter implements TestAdapter {
 		public readonly workspace: WorkspaceFolder,
 		private readonly log: Log
 	) {
-		this.log.info('Initializing tgstation test adapter');
+		this.log.info('Initializing Tgstation Test Adapter');
 
 		this.disposables.push(this.testsEmitter);
 		this.disposables.push(this.testStatesEmitter);
@@ -39,15 +40,21 @@ export class DMAdapter implements TestAdapter {
 		}
 
 		this.isLoading = true;
-		this.log.info('Loading tgstation tests');
+		this.log.info('Loading tests...');
 
 		this.testsEmitter.fire({ type: 'started' });
 
 		try {
 			this.loadedTests = await loadTests();
 			this.testsEmitter.fire({ type: 'finished', suite: this.loadedTests });
+
+			let numSuites = this.loadedTests.children.length;
+			let numTests = this.loadedTests.children.map(suite => (suite as TestSuiteInfo).children.length).reduce((sum, len) => sum + len);
+
+			this.log.info(`Loaded ${numTests} tests in ${numSuites} suites.`);
 		} catch (e) {
 			this.testsEmitter.fire({ type: 'finished', errorMessage: util.inspect(e) });
+			this.log.error('Failed to load tests:\n' + util.inspect(e));
 		}
 
 		this.retireEmitter.fire({});
@@ -64,13 +71,17 @@ export class DMAdapter implements TestAdapter {
 		}
 
 		this.isRunning = true;
+		this.log.info('Starting test run...');
+		const testStart = Date.now();
 
 		let allTestSuites = this.loadedTests.children.map(suite => suite.id);
 		this.testStatesEmitter.fire(<TestRunStartedEvent>{ type: 'started', tests: allTestSuites });
 
-		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter, this.workspace);
+		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter, this.workspace, this.log);
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
+		
+		this.log.info(`Test run finished! Total time: ${durationToString(testStart)}`);
 
 		// Reset any cancel listeners since theres nothing to cancel anymore
 		this.cancelEmitter.dispose();

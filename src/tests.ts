@@ -3,9 +3,10 @@ import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, Tes
 import { promises as fsp } from 'fs';
 import { EventEmitter } from 'vscode';
 import { runDreamDaemonProcess } from './DreamDaemonProcess';
-import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess } from './utils';
+import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, durationToString } from './utils';
 import * as config from './config';
 import {UserError, ConfigError, CancelError, RunError} from './error';
+import { Log } from 'vscode-test-adapter-util';
 
 const showError = vscode.window.showErrorMessage;
 
@@ -115,7 +116,8 @@ export async function runAllTests(
 	tests: (TestSuiteInfo | TestInfo)[],
 	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
 	cancelEmitter: EventEmitter<void>,
-	workspace: vscode.WorkspaceFolder
+	workspace: vscode.WorkspaceFolder,
+	log: Log
 ): Promise<void> {
 
 	let allTests: string[] = [];
@@ -131,29 +133,33 @@ export async function runAllTests(
 
 	let testLog: TestLog | undefined;
 	try {
-		testLog = await runTest(cancelEmitter, workspace);
+		testLog = await runTest(cancelEmitter, workspace, log);
 	}
 	catch (err) {
 		if (err instanceof CancelError) {
+			log.info("Test run cancelled")
 			allTests.forEach(test => {
 				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
 			});
 		} else {
 			if (err instanceof Error) {
 				let errobj: Error = err;
+				let errmsg: string;
 				if (err instanceof RunError) {
-					showError("Test Explorer: Test run failed, click one of the test items in the Test Explorer to see more.");
+					errmsg = 'Test run failed, click one of the test items in the Test Explorer to see more.';
 				} else if (err instanceof ConfigError) {
-					showError(`Test Explorer: ${err.message}\nPlease confirm that the workspace and/or user configuration is correct.`);
+					errmsg = `${err.message}\nPlease confirm that the workspace and/or user configuration is correct.`;
 				} else if (err instanceof UserError) {
-					showError(`Test Explorer: ${err.message}`);
+					errmsg = err.message;
 				} else {
-					showError(`Test Explorer: An unexpected error has occured, click one of the test items in the Test Explorer to see more. Please report this on the issue tracker!\n${errobj.name}: ${errobj.message}`);
+					errmsg = `An unexpected error has occured, click one of the test items in the Test Explorer to see more. Please report this on the issue tracker!\n${errobj.name}: ${errobj.message}`;
 				}
+				showError(`Test Explorer: ${errmsg}`);
 
 				// The stack contain the name and message already, so if it exists we don't need to print them.
 				err = errobj.stack ?? `${errobj.name}: ${errobj.message}`;
 			}
+			log.error(`Test run errored.\n${err}`);
 
 			// Mark tests as errored if we catch an error
 			allTests.forEach(test => {
@@ -195,6 +201,17 @@ export async function runAllTests(
 	ignoredTests.forEach(test => {
 		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
 	});
+
+	const numPass = passedTests.length;
+	const numSkip = skippedTests.length
+	const numTot = numPass + failedTests.length;
+	log.info(`${numPass}/${numTot} tests passed.${
+		numSkip > 0 ? 
+			` ${numSkip} ${
+				numSkip == 1 ?
+					'test was' :
+					'tests were'} skipped.` :
+			''}`);
 }
 
 /**
@@ -439,12 +456,20 @@ async function cleanupTest(workspace: vscode.WorkspaceFolder) {
  * Performs a test run
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the test run.
  */
-async function runTest(cancelEmitter: EventEmitter<void>, workspace: vscode.WorkspaceFolder): Promise<TestLog> {
-	let testDMEPath = await makeTestDME(workspace);
+async function runTest(cancelEmitter: EventEmitter<void>, workspace: vscode.WorkspaceFolder, log: Log): Promise<TestLog> {
+	log.info('Compiling...');
+	const compileStart = Date.now();
 
+	let testDMEPath = await makeTestDME(workspace);
 	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter);
 
+	log.info(`Compile finished! Time: ${durationToString(compileStart)}`);
+	log.info('Running server unit test run...');
+	const runStart = Date.now();
+
 	await runDMB(testDMBPath, workspace, cancelEmitter);
+
+	log.info(`Server unit test run finished! Time: ${durationToString(runStart)}`);
 
 	let testLog = await readTestsResults(workspace);
 
