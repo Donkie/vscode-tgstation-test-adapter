@@ -7,6 +7,7 @@ import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFi
 import * as config from './config';
 import { UserError, ConfigError, CancelError, RunError } from './error';
 import { Log } from 'vscode-test-adapter-util';
+import { getDMBlockvars } from './dm';
 
 const showError = vscode.window.showErrorMessage;
 
@@ -16,6 +17,20 @@ const showError = vscode.window.showErrorMessage;
 interface FoundLine {
 	match: RegExpExecArray,
 	lineNumber: number
+}
+
+function testHasTemplate(lines: string[], testStart: number) {
+	if (testStart >= (lines.length - 1)) {
+		return false;
+	}
+
+	const vars = getDMBlockvars(lines, testStart + 1);
+	if ('template' in vars) {
+		const templateName = vars['template'].trim();
+		const datumName = lines[testStart].trim();
+		return templateName === datumName;
+	}
+	return false;
 }
 
 /**
@@ -30,14 +45,15 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 
 	const foundLines: FoundLine[] = [];
 
-	let lineNumber = 0;
-	lines.forEach(line => {
-		lineNumber++;
+	for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
+		const line = lines[lineNumber];
 		const match = lineRegexp.exec(line);
 		if (match != null) {
-			foundLines.push({ match, lineNumber });
+			if (!testHasTemplate(lines, lineNumber)) {
+				foundLines.push({ match, lineNumber });
+			}
 		}
-	});
+	};
 
 	return foundLines;
 }

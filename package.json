@@ -65,7 +65,7 @@
           "description": "Write diagnostic logs to an output panel",
           "type": "boolean",
           "scope": "resource",
-          "default": false
+          "default": true
         },
         "tgstationTestExplorer.logfile": {
           "description": "Write diagnostic logs to the given file",
