@@ -98,8 +98,8 @@ async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
  */
 export async function loadTests() {
 	const unitTestsDef = config.getUnitTestsDef();
-	
-	const uris = await vscode.workspace.findFiles(config.getUnitTestsGlob());
+
+	const uris = await vscode.workspace.findFiles("**/*.dm");
 	let testSuites = await Promise.all(uris.map(uri => locateTestsInFile(uri, unitTestsDef)));
 
 	// Filter out suites without any tests

@@ -101,12 +101,6 @@
             "#define CIBUILDING"
           ]
         },
-        "tgstationTestExplorer.project.unitTestsDirectory": {
-          "type": "string",
-          "description": "A glob specifying the files containing the unit test definitions.",
-          "scope": "resource",
-          "default": "code/modules/unit_tests/*.dm"
-        },
         "tgstationTestExplorer.project.unitTestsDefinitionRegex": {
           "type": "string",
           "description": "A regex pattern used for locating unit test definitions. Must contain one capture group, which should return the id of the test.",

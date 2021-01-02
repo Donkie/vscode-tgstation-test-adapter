@@ -64,11 +64,6 @@ export function getResultsType() {
     throw new ConfigError(`Unknown results type ${resultsTypeName}`);
 }
 
-export function getUnitTestsGlob() {
-    let glob: string | undefined = getConfig('project.unitTestsDirectory');
-    return glob ?? 'code/modules/unit_tests/*.dm';
-}
-
 const defaultRegex = /\/datum\/unit_test\/([\w\/]+)\/Run\s*\(/gm;
 export function getUnitTestsDef() {
     let def: string | undefined = getConfig('project.unitTestsDefinitionRegex');
