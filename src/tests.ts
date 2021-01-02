@@ -5,7 +5,7 @@ import { EventEmitter } from 'vscode';
 import { runDreamDaemonProcess } from './DreamDaemonProcess';
 import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, durationToString } from './utils';
 import * as config from './config';
-import {UserError, ConfigError, CancelError, RunError} from './error';
+import { UserError, ConfigError, CancelError, RunError } from './error';
 import { Log } from 'vscode-test-adapter-util';
 
 const showError = vscode.window.showErrorMessage;
@@ -123,7 +123,7 @@ export async function runAllTests(
 	let allTests: string[] = [];
 
 	tests.forEach(suiteortest => {
-		let suite = suiteortest as TestSuiteInfo;
+		const suite = suiteortest as TestSuiteInfo;
 		testStatesEmitter.fire(<TestSuiteEvent>{ type: 'suite', suite: suite.id, state: 'running' });
 		suite.children.forEach(test => {
 			testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'running' });
@@ -143,7 +143,7 @@ export async function runAllTests(
 			});
 		} else {
 			if (err instanceof Error) {
-				let errobj: Error = err;
+				const errobj: Error = err;
 				let errmsg: string;
 				if (err instanceof RunError) {
 					errmsg = 'Test run failed, click one of the test items in the Test Explorer to see more.';
@@ -170,7 +170,7 @@ export async function runAllTests(
 
 	// Mark suites as completed no matter what the outcome
 	tests.forEach(suiteortest => {
-		let suite = suiteortest as TestSuiteInfo;
+		const suite = suiteortest as TestSuiteInfo;
 		testStatesEmitter.fire(<TestSuiteEvent>{ type: 'suite', suite: suite.id, state: 'completed' });
 	})
 
@@ -178,16 +178,24 @@ export async function runAllTests(
 		return;
 	}
 
-	let passedTests = testLog.passed_tests;
-	let failedTests = testLog.failed_tests;
+	const passedTests = testLog.passed_tests;
+	const passedTestsIds = passedTests.map(test => test.id);
+	const failedTests = testLog.failed_tests;
+	const failedTestsIds = failedTests.map(test => test.id);
 	// Skipped tests are any tests where skip is explicitly called.
-	let skippedTests = testLog.skipped_tests;
+	const skippedTests = testLog.skipped_tests;
+	const skippedTestsIds = skippedTests.map(test => test.id);
 	// Ignored tests are any tests we expected to find in the results but didn't. These will be marked as skipped in the UI.
-	let ignoredTests = allTests.filter(test =>
-		!passedTests.map(test => test.id).includes(test) &&
-		!failedTests.map(test => test.id).includes(test) &&
-		!skippedTests.map(test => test.id).includes(test)
+	const ignoredTests = allTests.filter(test =>
+		!passedTestsIds.includes(test) &&
+		!failedTestsIds.includes(test) &&
+		!skippedTestsIds.includes(test)
 	);
+
+	// Tests found in the results file
+	const testsInResults = passedTestsIds.concat(failedTestsIds, skippedTestsIds);
+	// Tests with a result in the results file but which we did not find in the tests loading phase
+	const notFoundTests = testsInResults.filter(id => !allTests.includes(id));
 
 	passedTests.forEach(test => {
 		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'passed' });
@@ -205,13 +213,15 @@ export async function runAllTests(
 	const numPass = passedTests.length;
 	const numSkip = skippedTests.length
 	const numTot = numPass + failedTests.length;
-	log.info(`${numPass}/${numTot} tests passed.${
-		numSkip > 0 ? 
-			` ${numSkip} ${
-				numSkip == 1 ?
-					'test was' :
-					'tests were'} skipped.` :
+	log.info(`${numPass}/${numTot} tests passed.${numSkip > 0 ?
+			` ${numSkip} ${numSkip == 1 ?
+				'test was' :
+				'tests were'} skipped.` :
 			''}`);
+	if (notFoundTests.length > 0) {
+		log.warn(`${notFoundTests.length == 1 ? 'This test was' : 'These tests were'} found in the results but never loaded:\n${notFoundTests.map(id => `\t${id}`).join('\n')}`);
+	}
+
 }
 
 /**
@@ -300,7 +310,7 @@ async function runDMB(path: string, workspace: vscode.WorkspaceFolder, cancelEmi
 
 	const ddpath = await config.getDreamdaemonExecutable();
 	const args = [path, '-close', '-trusted', '-verbose'];
-	if(resultsType === config.ResultType.Log){
+	if (resultsType === config.ResultType.Log) {
 		args.push('-params', '"log-directory=unit_test"');
 	}
 	await runDreamDaemonProcess(ddpath, args, cancelEmitter);
@@ -346,7 +356,7 @@ type TestLogResult = {
  */
 async function readTestsJson(workspace: vscode.WorkspaceFolder) {
 	const testsFilepath = `${workspace.uri.fsPath}/data/unit_tests.json`;
-	if(!await exists(testsFilepath)){
+	if (!await exists(testsFilepath)) {
 		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
 	}
 	const fdTestLog = await fsp.open(testsFilepath, 'r');
@@ -383,7 +393,7 @@ async function readTestsJson(workspace: vscode.WorkspaceFolder) {
  */
 async function readTestsLog(workspace: vscode.WorkspaceFolder) {
 	const testsFilepath = `${workspace.uri.fsPath}/data/logs/unit_test/tests.log`;
-	if(!await exists(testsFilepath)){
+	if (!await exists(testsFilepath)) {
 		throw new ConfigError(`"${testsFilepath}" not found after run. Make sure Results Type is set properly in config, and that the unit tests have actually been run.`);
 	}
 	const fdTestLog = await fsp.open(testsFilepath, 'r');

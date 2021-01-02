@@ -49,7 +49,7 @@ export class DMAdapter implements TestAdapter {
 			this.testsEmitter.fire({ type: 'finished', suite: this.loadedTests });
 
 			let numSuites = this.loadedTests.children.length;
-			if(numSuites > 0){
+			if (numSuites > 0) {
 				let numTests = this.loadedTests.children.map(suite => (suite as TestSuiteInfo).children.length).reduce((sum, len) => sum + len);
 				this.log.info(`Loaded ${numTests} tests in ${numSuites} suites.`);
 			} else {
@@ -83,7 +83,7 @@ export class DMAdapter implements TestAdapter {
 		await runAllTests(this.loadedTests.children, this.testStatesEmitter, this.cancelEmitter, this.workspace, this.log);
 
 		this.testStatesEmitter.fire(<TestRunFinishedEvent>{ type: 'finished' });
-		
+
 		this.log.info(`Test run finished! Total time: ${durationToString(testStart)}`);
 
 		// Reset any cancel listeners since theres nothing to cancel anymore
