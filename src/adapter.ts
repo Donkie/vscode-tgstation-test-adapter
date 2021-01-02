@@ -49,9 +49,12 @@ export class DMAdapter implements TestAdapter {
 			this.testsEmitter.fire({ type: 'finished', suite: this.loadedTests });
 
 			let numSuites = this.loadedTests.children.length;
-			let numTests = this.loadedTests.children.map(suite => (suite as TestSuiteInfo).children.length).reduce((sum, len) => sum + len);
-
-			this.log.info(`Loaded ${numTests} tests in ${numSuites} suites.`);
+			if(numSuites > 0){
+				let numTests = this.loadedTests.children.map(suite => (suite as TestSuiteInfo).children.length).reduce((sum, len) => sum + len);
+				this.log.info(`Loaded ${numTests} tests in ${numSuites} suites.`);
+			} else {
+				this.log.warn('No suites or tests were found in this workspace.')
+			}
 		} catch (e) {
 			this.testsEmitter.fire({ type: 'finished', errorMessage: util.inspect(e) });
 			this.log.error('Failed to load tests:\n' + util.inspect(e));
