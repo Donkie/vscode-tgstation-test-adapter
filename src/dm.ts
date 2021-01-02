@@ -40,3 +40,12 @@ export function getDMBlockvars(lines: string[], blockStart: number): { [key: str
 
     return vars;
 }
+
+const lineIsDefinition = /^\/?datum\/[\w\/]+\s*(?:\/\/.+)?[\r\n]*$/;
+/**
+ * Returns whether the supplied code line is a DM datum definition (/datum/test) and not for example a proc
+ * @param line 
+ */
+export function lineIsDatumDefinition(line: string){
+    return lineIsDefinition.test(line);
+}

@@ -7,7 +7,7 @@ import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFi
 import * as config from './config';
 import { UserError, ConfigError, CancelError, RunError } from './error';
 import { Log } from 'vscode-test-adapter-util';
-import { getDMBlockvars } from './dm';
+import { getDMBlockvars, lineIsDatumDefinition } from './dm';
 
 const showError = vscode.window.showErrorMessage;
 
@@ -49,7 +49,8 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 		const line = lines[lineNumber];
 		const match = lineRegexp.exec(line);
 		if (match != null) {
-			if (!testHasTemplate(lines, lineNumber)) {
+			const isDatumDef = lineIsDatumDefinition(line);
+			if (!isDatumDef || (isDatumDef && !testHasTemplate(lines, lineNumber))) {
 				foundLines.push({ match, lineNumber });
 			}
 		}

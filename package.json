@@ -105,7 +105,7 @@
           "type": "string",
           "description": "A regex pattern used for locating unit test definitions. Must contain one capture group, which should return the id of the test.",
           "scope": "resource",
-          "default": "/datum/unit_test/([\\w/]+)/Run\\s*\\("
+          "default": "/?datum/unit_test/([\\w/]+)/Run\\s*\\("
         },
         "tgstationTestExplorer.project.resultsType": {
           "type": "string",
