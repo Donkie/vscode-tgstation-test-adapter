@@ -118,7 +118,7 @@
           ],
           "enumDescriptions": [
             "Parsing unit test log files",
-            "Parsing the new standardized unit_test.json file"
+            "Parsing the new standardized unit_tests.json file"
           ]
         }
       }
