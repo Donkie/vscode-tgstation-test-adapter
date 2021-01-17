@@ -111,7 +111,7 @@
           "type": "string",
           "description": "How test results are interpreted.",
           "scope": "resource",
-          "default": "log",
+          "default": "json",
           "enum": [
             "log",
             "json"
