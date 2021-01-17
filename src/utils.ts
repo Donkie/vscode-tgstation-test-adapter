@@ -82,6 +82,29 @@ export async function runProcess(command: string, args: string[], cancelEmitter:
 }
 
 /**
+ * Runs a cancelable command.
+ * @param command The process command.
+ * @param cwd The directory to use for the command.
+ * @param cancelEmitter An emitter which lets you prematurely cancel and stop the process.
+ */
+export async function exec(command: string, cwd: string, cancelEmitter: EventEmitter<void>) {
+	return new Promise<string>((resolve, reject) => {
+		let process = child.exec(command, {
+			cwd: cwd
+		}, (err, stdout, stderr) => {
+			resolve(stdout + stderr);
+		});
+		let cancelListener = cancelEmitter.event(_ => {
+			process.kill();
+			reject(new CancelError());
+		});
+		process.once('exit', _ => {
+			cancelListener.dispose();
+		})
+	});
+}
+
+/**
  * Removes the file extension of a file or filepath
  * @param file Path
  */

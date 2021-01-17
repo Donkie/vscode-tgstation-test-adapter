@@ -3,11 +3,12 @@ import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, Tes
 import { promises as fsp } from 'fs';
 import { EventEmitter } from 'vscode';
 import { runDreamDaemonProcess } from './DreamDaemonProcess';
-import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, durationToString } from './utils';
+import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, exec, durationToString } from './utils';
 import * as config from './config';
 import { UserError, ConfigError, CancelError, RunError } from './error';
 import { Log } from 'vscode-test-adapter-util';
 import { getDMBlockvars, lineIsDatumDefinition } from './dm';
+import { getPreCompileCommands } from './config';
 
 const showError = vscode.window.showErrorMessage;
 
@@ -479,11 +480,33 @@ async function cleanupTest(workspace: vscode.WorkspaceFolder) {
 	rmFile(`${root}/${projectName}.mdme.rsc`).catch(console.warn);
 }
 
+async function runPreCompileCommands(workspace: vscode.WorkspaceFolder, log: Log, cancelEmitter: EventEmitter<void>){
+	const commands = getPreCompileCommands();
+	if(commands.length > 0){
+		log.info("Running pre-compile commands...");
+
+		for(var command of commands){
+			log.info(`Executing "${command}"`);
+			if(process.platform === "win32"){
+				command = "call " + command; // Absolutely awful
+			}
+			const out = await exec(command, workspace.uri.fsPath, cancelEmitter);
+			if(out.length > 0){
+				log.info(out);
+			}
+		}
+
+		log.info("Finished running pre-compile commands.");
+	}
+}
+
 /**
  * Performs a test run
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the test run.
  */
 async function runTest(cancelEmitter: EventEmitter<void>, workspace: vscode.WorkspaceFolder, log: Log): Promise<TestLog> {
+	await runPreCompileCommands(workspace, log, cancelEmitter);
+
 	log.info('Compiling...');
 	const compileStart = Date.now();
 

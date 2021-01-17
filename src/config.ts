@@ -78,3 +78,11 @@ export function getUnitTestsDef() {
     }
     return regex;
 }
+
+export function getPreCompileCommands() {
+    const commands: string[] | undefined = getConfig('project.preCompile');
+    if (!commands) {
+        return [];
+    }
+    return commands;
+}
