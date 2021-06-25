@@ -1,6 +1,12 @@
 
 # Tgstation Test Explorer for Visual Studio Code
-This is a [Test Explorer](https://marketplace.visualstudio.com/items?itemName=hbenl.vscode-test-explorer) adapter for BYOND's DM language and software. It is originally made for the [tgstation](https://github.com/tgstation/tgstation) codebase but tries to be as compatible as possible with other projects.
+This is a [Test Explorer](https://marketplace.visualstudio.com/items?itemName=hbenl.vscode-test-explorer) adapter for BYOND's DM language and software, which will greatly improve the user experience of working with unit tests in BYOND projects. It is originally made for the [tgstation](https://github.com/tgstation/tgstation) codebase but tries to be as compatible as possible with other projects.
+
+## Features
+* Automatically finds and lists all unit tests in the project
+* Compile and run the project in unit-testing mode with one click
+* Displays success status of each unit test
+* View error messages when unit tests fail
 
 Note: This extension is completely untested on anything but Windows 10. Detecting when dreamdaemon ends is abit hacky, so it might not work perfectly for other OSes. Please let me know if you have issues about this.
 ## Setup
@@ -52,7 +58,7 @@ Here is a full list of project level configurations which you probably need to s
 | Name | Description | Default value |
 |--|--|--|
 | DMEName | The name of your project's .dme file | tgstation.dme |
-| Defines | An array of code rows to add to the start of the .dme | ['#define CIBUILDING'] |
+| Defines | An array of code rows to inject to the start of the .dme when compiling | ['#define CIBUILDING'] |
 | Results Type | Either 'log' or 'json'. | log |
 | Unit Test Definition Regex | Regex used to match a unit test definition code line | /?datum/unit_test/([\\w/]+)/Run\\s*\\( |
 
