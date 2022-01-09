@@ -37,22 +37,17 @@
   "dependencies": {
     "@types/node": "^14.17.4",
     "ps-node": "^0.1.6",
-    "tslib": "^1.14.1",
-    "vscode-test-adapter-api": "^1.9.0",
-    "vscode-test-adapter-util": "^0.7.1"
+    "tslib": "^1.14.1"
   },
   "devDependencies": {
     "@types/ps-node": "^0.1.0",
-    "@types/vscode": "~1.38.0",
+    "@types/vscode": "~1.59.0",
     "typescript": "^3.9.10",
     "vsce": "^1.95.0"
   },
   "engines": {
-    "vscode": "^1.38.0"
+    "vscode": "^1.59.0"
   },
-  "extensionDependencies": [
-    "hbenl.vscode-test-explorer"
-  ],
   "activationEvents": [
     "workspaceContains:*.dme"
   ],
@@ -106,6 +101,12 @@
           "description": "A regex pattern used for locating unit test definitions. Must contain one capture group, which should return the id of the test.",
           "scope": "resource",
           "default": "/?datum/unit_test/([\\w/]+)/Run\\s*\\("
+        },
+        "tgstationTestExplorer.project.unitTestsFocusDefine": {
+          "type": "string",
+          "description": "A definition used in autogenerted dm focus file for every unit test meant to be active this run. Must contain $0 for unit test typepath substitution.",
+          "scope": "resource",
+          "default": "TEST_FOCUS($0)"
         },
         "tgstationTestExplorer.project.resultsType": {
           "type": "string",
