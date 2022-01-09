@@ -1,27 +1,22 @@
 import * as vscode from 'vscode';
-import { TestHub, testExplorerExtensionId } from 'vscode-test-adapter-api';
-import { Log, TestAdapterRegistrar } from 'vscode-test-adapter-util';
-import { DMAdapter } from './adapter';
+import { loadTests, runTests } from './tests';
 
 export async function activate(context: vscode.ExtensionContext) {
-	const log = new Log('tgstationTestExplorer', undefined, 'Tgstation Test Explorer Log');
-	context.subscriptions.push(log);
+	const controller = vscode.tests.createTestController('tgstationTestExplorer','Tgstation Test Controller')
+	context.subscriptions.push(controller);
 
-	const testExplorerExtension = vscode.extensions.getExtension<TestHub>(testExplorerExtensionId);
-	if (testExplorerExtension) {
-		log.info(`Activation: Test Explorer found`);
-	} else {
-		log.error(`Activation: Test Explorer not found`);
+	controller.resolveHandler = async test => {
+		if(!test){
+			const rootSuite = controller.createTestItem('root','All tests',undefined);
+			rootSuite.canResolveChildren = true;
+			controller.items.replace([rootSuite]);
+		}
+		if(test && test.id == 'root'){
+			const allTests = await loadTests(controller);
+			test.children.replace(allTests);
+		}
 	}
 
-	if (testExplorerExtension) {
-		const testHub = testExplorerExtension.exports;
-
-		// Register an adapter for each workspace folder
-		context.subscriptions.push(new TestAdapterRegistrar(
-			testHub,
-			workspaceFolder => new DMAdapter(workspaceFolder, log),
-			log
-		));
-	}
+	controller.createRunProfile('Run',vscode.TestRunProfileKind.Run,(request,token) => runTests(controller,request,token),true);
 }
+

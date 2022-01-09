@@ -1,23 +1,19 @@
 import * as vscode from 'vscode';
-import { TestSuiteInfo, TestInfo, TestRunStartedEvent, TestRunFinishedEvent, TestSuiteEvent, TestEvent } from 'vscode-test-adapter-api';
 import { promises as fsp } from 'fs';
 import { EventEmitter } from 'vscode';
 import { runDreamDaemonProcess } from './DreamDaemonProcess';
-import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, exec, durationToString } from './utils';
+import { exists, mkDir, rmDir, removeExtension, getFileFromPath, trimStart, rmFile, runProcess, exec, durationToString} from './utils';
 import * as config from './config';
-import { UserError, ConfigError, CancelError, RunError } from './error';
-import { Log } from 'vscode-test-adapter-util';
+import { ConfigError, RunError } from './error';
 import { getDMBlockvars, lineIsDatumDefinition } from './dm';
 import { getPreCompileCommands } from './config';
-
-const showError = vscode.window.showErrorMessage;
 
 /**
  * Represents a found line, returned by locateLineInFile.
  */
 interface FoundLine {
 	match: RegExpExecArray,
-	lineNumber: number
+	line: vscode.TextLine
 }
 
 function testHasTemplate(lines: string[], testStart: number) {
@@ -52,7 +48,8 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
 		if (match != null) {
 			const isDatumDef = lineIsDatumDefinition(line);
 			if (!isDatumDef || (isDatumDef && !testHasTemplate(lines, lineNumber))) {
-				foundLines.push({ match, lineNumber });
+				const line = doc.lineAt(lineNumber);
+				foundLines.push({ match, line });
 			}
 		}
 	};
@@ -65,48 +62,59 @@ async function locateLineInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
  * @param filePath The file to scan.
  * @param lineRegexp The regex used to match test definitions. Must contain one capture group which represents the test id.
  */
-async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp) {
-	const tests: TestInfo[] = [];
-
+async function locateTestsInFile(filePath: vscode.Uri, lineRegexp: RegExp, controller: vscode.TestController, output: vscode.OutputChannel) {
+	const tests: vscode.TestItem[] = [];
+	output.appendLine(`Parsing file: ${filePath}`)
 	const testLines = await locateLineInFile(filePath, lineRegexp);
 	for (const testLine of testLines) {
 		const testName = testLine.match[1];
 		if (testName === 'proc') {
 			continue;
 		}
-		tests.push({
-			type: 'test',
-			id: testName,
-			label: testName,
-			file: filePath.toString(),
-			line: testLine.lineNumber
-		});
+		const item = controller.createTestItem(testName,testName,filePath)
+		item.range = testLine.line.range
+		testData.set(item, { typepath: `/datum/unit_test/${testName}` }); //This could possibly be configable but it's already hardcoded in few places so left it as is
+		tests.push(item);
+	}
+	output.appendLine(`Finished file: ${filePath}`)
+	if(tests.length > 0){
+		let suiteName = removeExtension(getFileFromPath(filePath.path));
+		let suite = controller.createTestItem(`suite_${suiteName}`,suiteName,filePath);
+		suite.children.replace(tests);
+		return suite;
 	}
 
-	let suiteName = removeExtension(getFileFromPath(filePath.path));
-	let suite: TestSuiteInfo = {
-		type: 'suite',
-		id: `suite_${suiteName}`,
-		label: suiteName,
-		file: filePath.toString(),
-		children: tests
-	}
-
-	return suite;
+	return null;
 }
+
+/// Auxiliary test item data
+interface DmTestData {
+	typepath: string
+}
+
+const testData = new WeakMap<vscode.TestItem, DmTestData>();
 
 /**
  * Scans the workspace for any unit test definitions.
  */
-export async function loadTests() {
+export async function loadTests(controller: vscode.TestController) {
 	const unitTestsDef = config.getUnitTestsDef();
 
+	const debug_output = vscode.window.createOutputChannel("Tgstation Test Extension Log");
+
 	const uris = await vscode.workspace.findFiles("**/*.dm");
-	let testSuites = await Promise.all(uris.map(uri => locateTestsInFile(uri, unitTestsDef)));
+	
+	/// We limit it to 10 files at once otherwise vscode gets a stroke.
+	let testSuites : vscode.TestItem[] = [];
+	await parallel(10,uris,async uri => {
+		const test = await locateTestsInFile(uri,unitTestsDef,controller,debug_output);
+		if(test)
+			testSuites.push(test)
+	})
 
 	// Filter out suites without any tests
 	testSuites = testSuites.filter(val => {
-		return val.children.length > 0;
+		return val.children.size > 0;
 	});
 
 	// Sort suites
@@ -114,132 +122,114 @@ export async function loadTests() {
 		return a.label.localeCompare(b.label);
 	});
 
-	const rootSuite: TestSuiteInfo = {
-		type: 'suite',
-		id: 'root',
-		label: 'DM',
-		children: testSuites
-	};
-
-	return rootSuite;
+	return testSuites;
 }
 
-/**
- * Runs the unit test.
- * @param tests Test suites to run.
- * @param testStatesEmitter Emitter used to indicate the progress and results of the test .
- * @param cancelEmitter Emitter used to prematurely cancel the test run.
- */
-export async function runAllTests(
-	tests: (TestSuiteInfo | TestInfo)[],
-	testStatesEmitter: vscode.EventEmitter<TestRunStartedEvent | TestRunFinishedEvent | TestSuiteEvent | TestEvent>,
-	cancelEmitter: EventEmitter<void>,
-	workspace: vscode.WorkspaceFolder,
-	log: Log
-): Promise<void> {
 
-	let allTests: string[] = [];
-
-	tests.forEach(suiteortest => {
-		const suite = suiteortest as TestSuiteInfo;
-		testStatesEmitter.fire(<TestSuiteEvent>{ type: 'suite', suite: suite.id, state: 'running' });
-		suite.children.forEach(test => {
-			testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'running' });
-			allTests.push(test.id);
-		})
-	})
-
-	let testLog: TestLog | undefined;
-	try {
-		testLog = await runTest(cancelEmitter, workspace, log);
-	}
-	catch (err) {
-		if (err instanceof CancelError) {
-			log.info("Test run cancelled")
-			allTests.forEach(test => {
-				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
-			});
-		} else {
-			if (err instanceof Error) {
-				const errobj: Error = err;
-				let errmsg: string;
-				if (err instanceof RunError) {
-					errmsg = 'Test run failed, click one of the test items in the Test Explorer to see more.';
-				} else if (err instanceof ConfigError) {
-					errmsg = `${err.message}\nPlease confirm that the workspace and/or user configuration is correct.`;
-				} else if (err instanceof UserError) {
-					errmsg = err.message;
-				} else {
-					errmsg = `An unexpected error has occured, click one of the test items in the Test Explorer to see more. Please report this on the issue tracker!\n${errobj.name}: ${errobj.message}`;
-				}
-				showError(`Test Explorer: ${errmsg}`);
-
-				// The stack contain the name and message already, so if it exists we don't need to print them.
-				err = errobj.stack ?? `${errobj.name}: ${errobj.message}`;
-			}
-			log.error(`Test run errored.\n${err}`);
-
-			// Mark tests as errored if we catch an error
-			allTests.forEach(test => {
-				testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'errored', message: err });
-			})
+export async function parallel<T>(concurrent: number, collection: Iterable<T>, processor: (item: T) => Promise<any>) {
+	// queue up simultaneous calls
+	const queue: Promise<any>[] = [];
+	const ret = [];
+	for (const fn of collection) {
+		// fire the async function, add its promise to the queue, and remove
+		// it from queue when complete
+		const p = processor(fn).then(res => {
+			queue.splice(queue.indexOf(p), 1);
+			return res;
+		});
+		queue.push(p);
+		ret.push(p);
+		// if max concurrent, wait for one to finish
+		if (queue.length >= concurrent) {
+			await Promise.race(queue);
 		}
 	}
+	// wait for the rest of the calls to finish
+	await Promise.all(queue);
+}
 
-	// Mark suites as completed no matter what the outcome
-	tests.forEach(suiteortest => {
-		const suite = suiteortest as TestSuiteInfo;
-		testStatesEmitter.fire(<TestSuiteEvent>{ type: 'suite', suite: suite.id, state: 'completed' });
-	})
+export async function runTests(
+	controller: vscode.TestController,
+	request: vscode.TestRunRequest,
+	token: vscode.CancellationToken
+): Promise<void> {
+	const run = controller.createTestRun(request);
 
-	if (!testLog) {
+	// collect tests to run
+	/// By default we run all tests, if request.includes is defined just these
+	let tests_to_run : vscode.TestItem[] = [];
+	if(request.include){
+		tests_to_run = request.include
+	}
+	else{
+		controller.items.forEach(top_level_item => tests_to_run.push(top_level_item))
+	}
+	//skip anything in request.excludes
+	if(request.exclude){
+		tests_to_run = tests_to_run.filter(test => !request.exclude?.includes(test))
+	}
+
+	//Collect children items from top level ones (skipping ones in exclude)
+	tests_to_run = collectTestItems(tests_to_run, request);
+
+	if(tests_to_run.length <= 0){
+		run.appendOutput("Test run cancelled: no tests in the run.\r\n")
+		run.end();
 		return;
 	}
+	run.appendOutput(`Starting test run with ${tests_to_run.length} tests.\r\n`)
 
-	const passedTests = testLog.passed_tests;
-	const passedTestsIds = passedTests.map(test => test.id);
-	const failedTests = testLog.failed_tests;
-	const failedTestsIds = failedTests.map(test => test.id);
-	// Skipped tests are any tests where skip is explicitly called.
-	const skippedTests = testLog.skipped_tests;
-	const skippedTestsIds = skippedTests.map(test => test.id);
-	// Ignored tests are any tests we expected to find in the results but didn't. These will be marked as skipped in the UI.
-	const ignoredTests = allTests.filter(test =>
-		!passedTestsIds.includes(test) &&
-		!failedTestsIds.includes(test) &&
-		!skippedTestsIds.includes(test)
-	);
+	const first_uri = tests_to_run.find(x => x.uri !== undefined)?.uri! ///AAAH
+	const workspace = vscode.workspace.getWorkspaceFolder(first_uri)!;
 
-	// Tests found in the results file
-	const testsInResults = passedTestsIds.concat(failedTestsIds, skippedTestsIds);
-	// Tests with a result in the results file but which we did not find in the tests loading phase
-	const notFoundTests = testsInResults.filter(id => !allTests.includes(id));
+	run.appendOutput(`Used workspace path: ${workspace.uri.fsPath}\r\n`)
+	
+	//should be just rewritten to use tokens directly but i'm lazy
+	const cancelEmitter = new vscode.EventEmitter<void>()
+	token.onCancellationRequested(() => cancelEmitter.fire())
 
-	passedTests.forEach(test => {
-		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'passed' });
-	});
-	failedTests.forEach(test => {
-		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'failed', message: test.message });
-	});
-	skippedTests.forEach(test => {
-		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test.id, state: 'skipped', message: test.message });
-	});
-	ignoredTests.forEach(test => {
-		testStatesEmitter.fire(<TestEvent>{ type: 'test', test: test, state: 'skipped' });
-	});
+	// prepare test run dme
+	await runPreCompileCommands(workspace, cancelEmitter, run);
+	run.appendOutput('Compiling...\r\n');
+	const compileStart = Date.now();
+	let testDMEPath = await makeTestDME(workspace,tests_to_run);
+	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter);
+	
+	run.appendOutput(`Compile finished! Time: ${durationToString(compileStart)}\r\n`);
+	run.appendOutput('Running server unit test run...\r\n');
+	const runStart = Date.now();
+	
+	tests_to_run.map(test => run.started(test)); // Could be made to watch the output file to be more precise
+	
+	await runDMB(testDMBPath, workspace, cancelEmitter);
+	
+	run.appendOutput(`Server unit test run finished! Time: ${durationToString(runStart)}\r\n`);
+	let testLog = await readTestsResults(workspace);
 
-	const numPass = passedTests.length;
-	const numSkip = skippedTests.length
-	const numTot = numPass + failedTests.length;
-	log.info(`${numPass}/${numTot} tests passed.${numSkip > 0 ?
-			` ${numSkip} ${numSkip == 1 ?
-				'test was' :
-				'tests were'} skipped.` :
-			''}`);
-	if (notFoundTests.length > 0) {
-		log.warn(`${notFoundTests.length == 1 ? 'This test was' : 'These tests were'} found in the results but never loaded:\n${notFoundTests.map(id => `\t${id}`).join('\n')}`);
-	}
+	tests_to_run.forEach(test =>{
+		const failed_result = testLog.failed_tests.find(x => x.id == test.id);
+		if(failed_result)
+		{
+			run.failed(test,new vscode.TestMessage(failed_result.message ?? ""));
+			return;
+		}
+		const passed_result = testLog.passed_tests.find(x => x.id == test.id);
+		if(passed_result)
+		{
+			run.passed(test);
+			return;
+		}
+		const skipped_result = testLog.skipped_tests.find(x => x.id == test.id);
+		if(skipped_result)
+		{
+			run.failed(test,new vscode.TestMessage(skipped_result.message ?? ""));
+			return;
+		}
+	})
 
+	await cleanupTest(workspace);
+
+	run.end();
 }
 
 /**
@@ -263,24 +253,44 @@ async function writeDefines(fd: fsp.FileHandle) {
 }
 
 /**
+ * Writes the unit test focus file contents - each define marks a unit test to execute
+ * @param fd The file to write to.
+ */
+async function writeFocusFileContents(fd: fsp.FileHandle,tests_to_run : vscode.TestItem[]) {
+	const focus_define = config.getFocusDefine();
+	for (const test of tests_to_run) {
+		const test_path = testData.get(test)?.typepath;
+		if(test_path){
+			await fd.write(`${focus_define.replace("$0",test_path)}\n`);
+		}
+	}
+}
+
+/**
  * Copies the project .dme, applies the defines in the beginning and returns the path to this new .dme.
  */
-async function makeTestDME(workspace: vscode.WorkspaceFolder) {
+async function makeTestDME(workspace: vscode.WorkspaceFolder, tests_to_run : vscode.TestItem[]) {
 	let projectName = await getProjectName();
-	let testDMEPath = `${workspace.uri.fsPath}/${projectName}.mdme.dme`;
+	let testDMEPath = `${workspace.uri.fsPath}/${projectName}.test.dme`;
+	let focusFilePath = `${workspace.uri.fsPath}/${projectName}_unit_test_focus_file.dm`
 
 	let fdNew = await fsp.open(testDMEPath, 'w');
 	let fdOrig = await fsp.open(`${workspace.uri.fsPath}/${projectName}.dme`, 'r');
+	let focusFile = await fsp.open(focusFilePath, 'w')
 
 	await writeDefines(fdNew);
+	await writeFocusFileContents(focusFile,tests_to_run)
 
 	await fdOrig.readFile()
 		.then(buf => {
 			fdNew.write(buf);
 		});
 
+	await fdNew.write(`#include "${projectName}_unit_test_focus_file.dm"\n`)
+
 	fdNew.close();
 	fdOrig.close();
+	focusFile.close()
 
 	return testDMEPath;
 }
@@ -293,12 +303,12 @@ async function makeTestDME(workspace: vscode.WorkspaceFolder) {
 async function compileDME(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>) {
 	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
-	if (/\.mdme\.dmb - 0 errors/.exec(stdout) == null) {
+	if (/\.test\.dmb - 0 errors/.exec(stdout) == null) {
 		throw new RunError(`Compilation failed:\n${stdout}`);
 	}
 
 	let projectName = await getProjectName();
-	let testDMBPath = `${workspace.uri.fsPath}/${projectName}.mdme.dmb`;
+	let testDMBPath = `${workspace.uri.fsPath}/${projectName}.test.dmb`;
 	return testDMBPath;
 }
 
@@ -474,56 +484,44 @@ async function readTestsResults(workspace: vscode.WorkspaceFolder) {
 async function cleanupTest(workspace: vscode.WorkspaceFolder) {
 	const root = workspace.uri.fsPath;
 	let projectName = await getProjectName();
-	rmFile(`${root}/${projectName}.mdme.dmb`).catch(console.warn);
-	rmFile(`${root}/${projectName}.mdme.dme`).catch(console.warn);
-	rmFile(`${root}/${projectName}.mdme.dyn.rsc`).catch(console.warn);
-	rmFile(`${root}/${projectName}.mdme.rsc`).catch(console.warn);
+	rmFile(`${root}/${projectName}.test.dmb`).catch(console.warn);
+	rmFile(`${root}/${projectName}.test.dme`).catch(console.warn);
+	rmFile(`${root}/${projectName}.test.dyn.rsc`).catch(console.warn);
+	rmFile(`${root}/${projectName}.test.rsc`).catch(console.warn);
+	rmFile(`${root}/${projectName}_unit_test_focus_file.dm`).catch(console.warn);
 }
 
-async function runPreCompileCommands(workspace: vscode.WorkspaceFolder, log: Log, cancelEmitter: EventEmitter<void>){
+async function runPreCompileCommands(workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>, run : vscode.TestRun){
 	const commands = getPreCompileCommands();
 	if(commands.length > 0){
-		log.info("Running pre-compile commands...");
+		run.appendOutput("Running pre-compile commands...\r\n");
 
 		for(var command of commands){
-			log.info(`Executing "${command}"`);
+			run.appendOutput(`Executing "${command}"\r\n`);
 			if(process.platform === "win32"){
 				command = "call " + command; // Absolutely awful
 			}
 			const out = await exec(command, workspace.uri.fsPath, cancelEmitter);
 			if(out.length > 0){
-				log.info(out);
+				run.appendOutput(`${out}\r\n`);
 			}
 		}
 
-		log.info("Finished running pre-compile commands.");
+		run.appendOutput("Finished running pre-compile commands.\r\n");
 	}
 }
 
-/**
- * Performs a test run
- * @param cancelEmitter An emitter which lets you prematurely cancel and stop the test run.
- */
-async function runTest(cancelEmitter: EventEmitter<void>, workspace: vscode.WorkspaceFolder, log: Log): Promise<TestLog> {
-	await runPreCompileCommands(workspace, log, cancelEmitter);
-
-	log.info('Compiling...');
-	const compileStart = Date.now();
-
-	let testDMEPath = await makeTestDME(workspace);
-	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter);
-
-	log.info(`Compile finished! Time: ${durationToString(compileStart)}`);
-	log.info('Running server unit test run...');
-	const runStart = Date.now();
-
-	await runDMB(testDMBPath, workspace, cancelEmitter);
-
-	log.info(`Server unit test run finished! Time: ${durationToString(runStart)}`);
-
-	let testLog = await readTestsResults(workspace);
-
-	await cleanupTest(workspace);
-
-	return testLog;
+function collectTestItems(top_level_tests: vscode.TestItem[], request: vscode.TestRunRequest): vscode.TestItem[] {
+	const result : vscode.TestItem[] = [];
+	top_level_tests.forEach(x => {
+		if(request.exclude?.includes(x))
+			return;
+		result.push(x);
+		if(x.children.size > 0){
+			const test_children : vscode.TestItem[] = [];
+			x.children.forEach(child => test_children.push(child));
+			result.push(...collectTestItems(test_children,request))
+		}
+	})
+	return result;
 }

@@ -74,9 +74,22 @@ export function getUnitTestsDef() {
     try {
         regex = new RegExp(def, 'gm');
     } catch (err) {
-        throw new ConfigError(`Invalid regex for unit test definition. Message: ${err.message}`);
+        const error_message = typeof err === "string" ? err.toUpperCase() : (err instanceof Error ? err.message : "Unknown");
+        throw new ConfigError(`Invalid regex for unit test definition. Message: ${error_message}`);
     }
     return regex;
+}
+
+const defaultFocusDefine = `TEST_FOCUS($0)`;
+export function getFocusDefine() {
+    let def: string | undefined = getConfig('project.unitTestsFocusDefine');
+    if (!def) {
+        return defaultFocusDefine;
+    }
+    if(!def.includes("$0")){
+        throw new ConfigError(`Invalid unit test focus file definition. Definition must contain $0 for unit test typepath substitution.`);
+    }
+    return def;
 }
 
 export function getPreCompileCommands() {
