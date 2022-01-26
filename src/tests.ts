@@ -193,7 +193,7 @@ export async function runTests(
 	run.appendOutput('Compiling...\r\n');
 	const compileStart = Date.now();
 	let testDMEPath = await makeTestDME(workspace,tests_to_run);
-	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter);
+	let testDMBPath = await compileDME(testDMEPath, workspace, cancelEmitter, run);
 	
 	run.appendOutput(`Compile finished! Time: ${durationToString(compileStart)}\r\n`);
 	run.appendOutput('Running server unit test run...\r\n');
@@ -201,7 +201,7 @@ export async function runTests(
 	
 	tests_to_run.map(test => run.started(test)); // Could be made to watch the output file to be more precise
 	
-	await runDMB(testDMBPath, workspace, cancelEmitter);
+	await runDMB(testDMBPath, workspace, cancelEmitter, run);
 	
 	run.appendOutput(`Server unit test run finished! Time: ${durationToString(runStart)}\r\n`);
 	let testLog = await readTestsResults(workspace);
@@ -300,10 +300,13 @@ async function makeTestDME(workspace: vscode.WorkspaceFolder, tests_to_run : vsc
  * @param path The path to the .dme to compile.
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the compilation.
  */
-async function compileDME(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>) {
+async function compileDME(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>, run : vscode.TestRun) {
 	const dmpath = await config.getDreammakerExecutable();
 	let stdout = await runProcess(dmpath, [path], cancelEmitter);
 	if (/\.test\.dmb - 0 errors/.exec(stdout) == null) {
+		run.appendOutput(`Compilation failed:\n${stdout}`);
+		await cleanupTest(workspace);
+		run.end();
 		throw new RunError(`Compilation failed:\n${stdout}`);
 	}
 
@@ -317,8 +320,11 @@ async function compileDME(path: string, workspace: vscode.WorkspaceFolder, cance
  * @param path The .dmb file to run.
  * @param cancelEmitter An emitter which lets you prematurely cancel and stop the run.
  */
-async function runDMB(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>) {
+async function runDMB(path: string, workspace: vscode.WorkspaceFolder, cancelEmitter: EventEmitter<void>, run : vscode.TestRun) {
 	if (!await exists(path)) {
+		run.appendOutput(`Can't start dreamdaemon, "${path}" does not exist!`);
+		await cleanupTest(workspace);
+		run.end();
 		throw new RunError(`Can't start dreamdaemon, "${path}" does not exist!`);
 	}
 
