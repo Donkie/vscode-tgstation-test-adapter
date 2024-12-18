@@ -343,7 +343,7 @@ async function runDMB(path: string, workspace: vscode.WorkspaceFolder, cancelEmi
 	}
 
 	const ddpath = await config.getDreamdaemonExecutable();
-	const args = [path, '-close', '-trusted', '-verbose'];
+	const args = [`"${path}"`, '-close', '-trusted', '-verbose'];
 	if (resultsType === config.ResultType.Log) {
 		args.push('-params', '"log-directory=unit_test"');
 	}
