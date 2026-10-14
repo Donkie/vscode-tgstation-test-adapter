@@ -42,8 +42,8 @@
   "devDependencies": {
     "@types/ps-node": "^0.1.0",
     "@types/vscode": "~1.59.0",
-    "typescript": "^3.9.10",
-    "vsce": "^1.95.0"
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^3.9.10"
   },
   "engines": {
     "vscode": "^1.59.0"
